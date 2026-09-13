@@ -1,0 +1,48 @@
+---
+name: production-backlog-029-gptoss-ee-adv0705-v1
+purpose: AdventureFinder production-backlog-029 row-major local production scoring
+  for ADV-0705 on Exploration Emphasis. Preserve the frozen qualified profile; produce
+  one proposed assessment pending QC/ingestion.
+dispatch: pool
+models:
+- gptoss
+dimension: Exploration Emphasis
+adventures:
+- ADV-0705
+replicates: 1
+workers:
+- mac
+required_worker_labels:
+- local
+scorer:
+  repo: "../../../af-cli-scoring-utility-production"
+  mode: positional
+  extra_args:
+  - "--config"
+  - "${LME_REPO}/production_backlog/production-backlog-029/runtime-ee.yml"
+production_contract:
+  contract_type: adventure_ingest_v1
+  disposition: local-qualified-adventure-ingest
+  queue: production-backlog-029
+  candidate_model: gptoss
+  qualified_profile: ee-clean-reset-v0.5
+  source_qualification_path: production_backlog/qualified_exploration_emphasis.yml
+  source_qualification_sha256: 40c629b5f16d1753895b5cdf313d7ed1717152bb40ee0e2c046e844f40f24640
+  replicate_count: 1
+  no_favorable_rerun: true
+  external_api_cost_usd: 0.0
+  catalog_filename: 5e_Adventure_Master_Catalog_5.6.xlsx
+  catalog_sha256: 263e500e122bc6ad07c111ffc3bff647d1c3ee10312c735ebe6542d34b33b8da
+  qualified_scorer_baseline: 4f11e25c99b4f408f88bf7205395d31f8ab325e8
+success_criteria:
+- Structured scorer output validates and remains grounded to the canonical adventure
+  source unit.
+- Use the frozen locally qualified profile for Exploration Emphasis.
+- Preserve the single completed sample as a proposed production assessment pending
+  QC/ingestion.
+- Do not use an existing accepted score or calibration target as expected-answer context.
+stop_conditions:
+- Do not rerun a completed case to seek a more favorable sample.
+- Queue-level repeated operational failures trigger the background runner circuit
+  breaker.
+cost_cap_usd: 0.01

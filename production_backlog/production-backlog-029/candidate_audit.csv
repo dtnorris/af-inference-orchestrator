@@ -1,0 +1,34 @@
+adventure_id,adventure_title,source_book,publisher,page_count,level_start,level_end,levels_action,decision,reason
+ADV-0698,Aninas Family Crypt,The Dread Dungeononomicon,Raging Swan Press,10,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0699,Blasted Donjon of the Erdukr Dwarves,The Dread Dungeononomicon,Raging Swan Press,10,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0700,Cannibal Druid of the Scorned Forest,The Dread Dungeononomicon,Raging Swan Press,10,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0701,Craghollow Mine,The Dread Dungeononomicon,Raging Swan Press,10,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0702,The Crumbled Tower,The Dread Dungeononomicon,Raging Swan Press,10,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0703,Cursed Refuge of the Valley of Tears,The Dread Dungeononomicon,Raging Swan Press,10,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0704,Cursed Tower of the Astromancer,The Dread Dungeononomicon,Raging Swan Press,10,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0705,The Death King's Forlorn Isle,The Dread Dungeononomicon,Raging Swan Press,14,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0706,Decaying Citadel of the Fated Warlock,The Dread Dungeononomicon,Raging Swan Press,10,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0707,Deeper Delvings of the Nameless Mage,The Dread Dungeononomicon,Raging Swan Press,10,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0708,Delthur's Folly,The Dread Dungeononomicon,Raging Swan Press,12,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0709,Deszraul's Hold,The Dread Dungeononomicon,Raging Swan Press,10,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0710,Drowned Fane of the Elder God,The Dread Dungeononomicon,Raging Swan Press,10,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0711,Forbidden Halls of the Nameless Mage,The Dread Dungeononomicon,Raging Swan Press,10,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0712,Hidden Redoubt of Gilak Urser,The Dread Dungeononomicon,Raging Swan Press,10,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0713,Hidden Sanctum of the Nameless Mage,The Dread Dungeononomicon,Raging Swan Press,10,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0714,The House of Yspher,The Dread Dungeononomicon,Raging Swan Press,12,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0715,Lost Cellar of the Nameless Mage,The Dread Dungeononomicon,Raging Swan Press,10,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0716,Lost Eyrie of the Demon King,The Dread Dungeononomicon,Raging Swan Press,10,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0717,Martryn Manor,The Dread Dungeononomicon,Raging Swan Press,10,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0718,Nightmare Lodge of the Insane Armiger,The Dread Dungeononomicon,Raging Swan Press,10,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0719,Onyx Prison of the Demon King,The Dread Dungeononomicon,Raging Swan Press,10,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0720,Pit of Unquiet Souls,The Dread Dungeononomicon,Raging Swan Press,12,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0721,Ruin of Bleak Hill,The Dread Dungeononomicon,Raging Swan Press,12,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0722,Scarlock Hill,The Dread Dungeononomicon,Raging Swan Press,10,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0723,Secret Hold of the Slaver Lords,The Dread Dungeononomicon,Raging Swan Press,10,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0724,The Shadow Fane,The Dread Dungeononomicon,Raging Swan Press,10,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0725,The Shard Isles,The Dread Dungeononomicon,Raging Swan Press,10,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0726,Shattered Halls of the Undying Oracles,The Dread Dungeononomicon,Raging Swan Press,10,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0727,The Splintered Crypt,The Dread Dungeononomicon,Raging Swan Press,8,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0728,Starfall Chantry,The Dread Dungeononomicon,Raging Swan Press,10,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0729,Undercity Chapel,The Dread Dungeononomicon,Raging Swan Press,10,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0730,Wreck of the Sea Sprite,The Dread Dungeononomicon,Raging Swan Press,10,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
