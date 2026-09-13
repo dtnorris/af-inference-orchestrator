@@ -10,7 +10,7 @@ module LocalModelEvaluation
     SCHEMA_VERSION = 1
     STATE_FILE = "fleet.json"
     CURRENT_FILE = "current"
-    ARTIFACT_DIRS = %w[bootstrap tunnels].freeze
+    ARTIFACT_DIRS = %w[bootstrap tunnels lease].freeze
     DEFAULT_LOCAL_PORT_BASE = 11_441
 
     class Error < StandardError; end
@@ -57,12 +57,13 @@ module LocalModelEvaluation
       clear_current(record.fetch("fleet_id"))
     end
 
-    def activate(workers:, cloud:, gpu_id:, image:)
+    def activate(workers:, cloud:, gpu_id:, image:, lease: nil)
       assert_no_active!
 
       workers = Array(workers).sort_by(&:index)
       raise Error, "cannot activate an empty RunPod fleet" if workers.empty?
       validate_worker_indices!(workers.map(&:index))
+      lease = normalize_lease(lease)
 
       timestamp = utc_now
       fleet_id = build_fleet_id(timestamp, workers.first.pod_id)
@@ -99,9 +100,11 @@ module LocalModelEvaluation
         "workers" => worker_records,
         "artifact_dirs" => {
           "bootstrap" => "bootstrap",
-          "tunnels" => "tunnels"
+          "tunnels" => "tunnels",
+          "lease" => "lease"
         }
       }
+      record["lease"] = lease if lease
 
       begin
         ARTIFACT_DIRS.each { |name| FileUtils.mkdir_p(File.join(dir, name)) }
@@ -230,13 +233,47 @@ module LocalModelEvaluation
       raise Error, "invalid fleet id: #{fleet_id.inspect}"
     end
 
+    def normalize_lease(value)
+      return nil if value.nil?
+      raise Error, "lease must be a hash" unless value.is_a?(Hash)
+
+      lease = value.transform_keys(&:to_s)
+      started_at = Time.parse(lease.fetch("started_at_utc").to_s).utc
+      max_runtime_seconds = optional_positive_float(lease["max_runtime_seconds"], "lease max_runtime_seconds")
+      max_spend_usd = optional_positive_float(lease["max_spend_usd"], "lease max_spend_usd")
+      if max_runtime_seconds.nil? && max_spend_usd.nil?
+        raise Error, "lease must define max_runtime_seconds and/or max_spend_usd"
+      end
+
+      {
+        "started_at_utc" => started_at.iso8601,
+        "max_runtime_seconds" => max_runtime_seconds,
+        "expires_at_utc" => max_runtime_seconds ? (started_at + max_runtime_seconds).iso8601 : nil,
+        "max_spend_usd" => max_spend_usd
+      }
+    rescue KeyError, ArgumentError => e
+      raise Error, "invalid lease: #{e.message}"
+    end
+
+    def optional_positive_float(value, label)
+      return nil if value.nil?
+
+      number = Float(value)
+      raise Error, "#{label} must be positive" unless number.positive?
+
+      number
+    rescue ArgumentError, TypeError
+      raise Error, "#{label} must be numeric"
+    end
+
     def validate_record!(record)
       workers = Array(record.fetch("workers"))
       validate_worker_indices!(workers.map { |worker| worker.fetch("index") })
       expected_count = RunpodWorkers.validate_count(record.fetch("worker_count"))
-      return if expected_count == workers.length
-
-      raise Error, "fleet worker_count #{expected_count} does not match #{workers.length} worker records"
+      unless expected_count == workers.length
+        raise Error, "fleet worker_count #{expected_count} does not match #{workers.length} worker records"
+      end
+      normalize_lease(record["lease"]) if record["lease"]
     rescue KeyError, RunpodWorkers::Error => e
       raise Error, "invalid fleet state: #{e.message}"
     end

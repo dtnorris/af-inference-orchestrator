@@ -3,6 +3,7 @@
 require "json"
 require "time"
 require_relative "runpod_fleet_state"
+require_relative "runpod_lease"
 
 module LocalModelEvaluation
   class RunpodStatus
@@ -29,6 +30,8 @@ module LocalModelEvaluation
                    else
                      now
                    end
+      lease = RunpodLease.snapshot_for(fleet:, now:)
+      lease = nil if lease["status"] == "unconfigured"
 
       {
         "fleet_id" => fleet.fetch("fleet_id"),
@@ -45,10 +48,13 @@ module LocalModelEvaluation
         "estimated_accrued_cost_usd" => workers.sum { |worker| worker.fetch("estimated_cost_usd") }.round(6),
         "provider_checked" => !@client.nil?,
         "workers" => workers,
+        "lease" => lease,
         "bootstrap" => bootstrap_snapshot(fleet, now)
       }
     rescue KeyError, ArgumentError, TypeError => e
       raise Error, "invalid current fleet state: #{e.message}"
+    rescue RunpodLease::Error => e
+      raise Error, e.message
     rescue RunpodFleetState::Error => e
       raise Error, e.message
     end
@@ -72,6 +78,7 @@ module LocalModelEvaluation
       lines << format("  Current tracked rate: $%.4f/hr", snapshot.fetch("current_tracked_hourly_rate_usd"))
       lines << "  Tracked elapsed: #{format_duration(snapshot.fetch('tracked_elapsed_seconds'))}"
       lines << format("  Estimated accrued cost: $%.4f", snapshot.fetch("estimated_accrued_cost_usd"))
+      append_lease(lines, snapshot["lease"])
       lines << "  Provider check: #{snapshot.fetch('provider_checked') ? 'enabled' : 'not checked (RUNPOD_API_KEY unavailable)'}"
       lines << ""
       lines << format("%-9s %-10s %-12s %-10s %-10s %-10s %s", "WORKER", "LME", "RUNPOD", "RATE", "ELAPSED", "EST.COST", "BOOTSTRAP")
@@ -96,6 +103,10 @@ module LocalModelEvaluation
       lines << ""
       lines << "Billing estimate begins at LME fleet activation after RunPod SSH readiness and uses recorded worker rates."
       lines << "It can understate provider billing by provisioning time and can differ because of provider billing granularity, credits, or rate changes."
+      if snapshot["lease"]
+        lines << "Lease spend is a conservative guard estimate that starts before the first paid pod create and uses recorded worker rates."
+        lines << "Lease enforcement is a local watchdog, not a provider-side billing cap; it cannot enforce limits while the control-plane Mac is offline."
+      end
       lines.join("\n") + "\n"
     end
 
@@ -244,6 +255,25 @@ module LocalModelEvaluation
         counts.fetch("interrupted", 0)
       )
       lines << "  Evidence: #{bootstrap.fetch('evidence_dir')}"
+    end
+
+    def append_lease(lines, lease)
+      return unless lease
+
+      lines << "  Lease: #{lease.fetch('status').upcase}"
+      lines << "  Lease started: #{lease.fetch('started_at_utc')}"
+      if lease["max_runtime_seconds"]
+        lines << "  Runtime lease: #{format_duration(lease.fetch('max_runtime_seconds'))} max; #{format_duration(lease.fetch('runtime_remaining_seconds'))} remaining"
+      end
+      if lease["max_spend_usd"]
+        lines << format(
+          "  Spend lease: $%.4f max; $%.4f conservative tracked; $%.4f remaining",
+          lease.fetch("max_spend_usd"), lease.fetch("estimated_spend_usd"), lease.fetch("budget_remaining_usd")
+        )
+      end
+      unless lease.fetch("expiration_reasons").empty?
+        lines << "  Lease expired by: #{lease.fetch('expiration_reasons').join(', ')}"
+      end
     end
 
     def append_provider_warnings(lines, snapshot)

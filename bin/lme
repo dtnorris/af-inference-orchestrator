@@ -119,6 +119,38 @@ def runpod_fleet(client = runpod_client, namespace: nil, create_namespace: false
   )
 end
 
+def start_runpod_lease_watchdog!(namespace:, fleet:, workers:)
+  record = fleet.fleet_state.current
+  return nil unless record && record["lease"]
+
+  lease_dir = fleet.fleet_state.artifact_dir(record.fetch("fleet_id"), "lease")
+  FileUtils.mkdir_p(lease_dir)
+  log_path = File.join(lease_dir, LocalModelEvaluation::RunpodLease::LOG_FILE)
+  log = File.open(log_path, "a")
+  command = [
+    RbConfig.ruby,
+    File.join(ROOT, "bin", "lme-runpod-lease"),
+    "watch",
+    "--fleet", namespace.fleet_key,
+    "--expected-fleet-id", record.fetch("fleet_id")
+  ]
+  pid = Process.spawn(*command, chdir: ROOT, in: File::NULL, out: log, err: [:child, :out], pgroup: true)
+  Process.detach(pid)
+  puts "Lease watchdog: pid #{pid}; log #{log_path}"
+  pid
+rescue SystemCallError => e
+  teardown_error = nil
+  begin
+    fleet.destroy(worker_indices: workers.map(&:index))
+  rescue StandardError => destroy_error
+    teardown_error = destroy_error
+  end
+  detail = teardown_error ? "; emergency teardown also failed: #{teardown_error.message}" : "; newly-created fleet was torn down"
+  raise LocalModelEvaluation::RunpodFleet::Error, "could not start lease watchdog: #{e.message}#{detail}"
+ensure
+  log&.close
+end
+
 def build_runpod_readiness(experiment, workers, models)
   namespace = runpod_namespace
   fleet_state = LocalModelEvaluation::RunpodFleetState.new(
@@ -178,6 +210,8 @@ def runpod_create_options(argv)
     cloud: LocalModelEvaluation::RunpodFleet::DEFAULT_CLOUD,
     container_disk_gb: LocalModelEvaluation::RunpodFleet::DEFAULT_CONTAINER_DISK_GB,
     volume_gb: LocalModelEvaluation::RunpodFleet::DEFAULT_VOLUME_GB,
+    max_runtime_seconds: nil,
+    max_spend_usd: nil,
     dry_run: false,
     yes: false,
     max_hourly_usd: ENV.fetch("RUNPOD_MAX_FLEET_HOURLY_USD", LocalModelEvaluation::RunpodFleet::DEFAULT_MAX_FLEET_HOURLY_USD),
@@ -191,6 +225,8 @@ def runpod_create_options(argv)
     o.on("--cloud TIER", "RunPod cloud tier: COMMUNITY or SECURE (default: COMMUNITY)") { |v| opts[:cloud] = v }
     o.on("--container-disk-gb N", Integer, "Container/root disk size in GB") { |v| opts[:container_disk_gb] = v }
     o.on("--volume-gb N", Integer, "Persistent /workspace volume size in GB") { |v| opts[:volume_gb] = v }
+    o.on("--max-runtime-minutes MINUTES", Float, "Destroy the fleet after this many minutes") { |v| opts[:max_runtime_seconds] = v * 60.0 }
+    o.on("--max-spend-usd USD", Float, "Destroy the fleet when conservative tracked spend reaches USD") { |v| opts[:max_spend_usd] = v }
     o.on("--dry-run", "Read-only availability/cost/prerequisite check") { opts[:dry_run] = true }
     o.on("--yes", "Skip the paid-create confirmation prompt") { opts[:yes] = true }
     o.on("--max-hourly-usd USD", Float, "Fail closed above this fleet's hourly rate") { |v| opts[:max_hourly_usd] = v }
@@ -299,6 +335,9 @@ when "runpod-tunnels"
 when "runpod-status"
   exec RbConfig.ruby, File.join(ROOT, "bin", "lme-runpod-status"), *ARGV
 
+when "runpod-lease"
+  exec RbConfig.ruby, File.join(ROOT, "bin", "lme-runpod-lease"), *ARGV
+
 when "runpod-bootstrap"
   exec RbConfig.ruby, File.join(ROOT, "bin", "lme-runpod-bootstrap"), *ARGV
 
@@ -316,7 +355,9 @@ when "runpod-create"
       cloud: opts[:cloud],
       max_fleet_hourly_usd: opts[:max_hourly_usd],
       container_disk_gb: opts[:container_disk_gb],
-      volume_gb: opts[:volume_gb]
+      volume_gb: opts[:volume_gb],
+      max_runtime_seconds: opts[:max_runtime_seconds],
+      max_spend_usd: opts[:max_spend_usd]
     )
     ssh_public_key = fleet.read_ssh_public_key(opts[:ssh_public_key])
     current_total_rate = namespace.total_active_hourly_usd
@@ -351,6 +392,15 @@ when "runpod-create"
     puts format("  Existing managed fleets: $%.4f/hr", current_total_rate)
     puts format("  Projected managed total: $%.4f/hr", projected_total_rate)
     puts format("  Aggregate safety cap: $%.4f/hr", max_total_rate)
+    if preflight.max_runtime_seconds
+      puts format("  Runtime lease: %.1f minutes", preflight.max_runtime_seconds / 60.0)
+    end
+    if preflight.max_spend_usd
+      puts format("  Spend lease: $%.4f", preflight.max_spend_usd)
+    end
+    if preflight.max_runtime_seconds || preflight.max_spend_usd
+      puts "  Lease enforcement: local detached watchdog after fleet activation"
+    end
     puts "  SSH public key: #{File.expand_path(opts[:ssh_public_key])}"
     puts "No pods have been created."
 
@@ -381,9 +431,12 @@ when "runpod-create"
       max_fleet_hourly_usd: opts[:max_hourly_usd],
       container_disk_gb: opts[:container_disk_gb],
       volume_gb: opts[:volume_gb],
+      max_runtime_seconds: opts[:max_runtime_seconds],
+      max_spend_usd: opts[:max_spend_usd],
       wait_seconds: opts[:wait_seconds],
       poll_seconds: opts[:poll_seconds]
     )
+    start_runpod_lease_watchdog!(namespace:, fleet:, workers:)
     actual_rate = workers.sum(&:hourly_rate)
     puts "RunPod fleet ready:"
     workers.each do |worker|
@@ -551,10 +604,11 @@ else
       bin/lme worker-check [EXPERIMENT.yml]
       bin/lme runpod-ready EXPERIMENT.yml [--fleet KEY]
       bin/lme runpod-status [--fleet KEY]
+      bin/lme runpod-lease [status|watch] [--fleet KEY] [--expected-fleet-id ID] [--poll-seconds N]
       bin/lme runpod-tunnels [start|status|stop] [--workers 1-16|--all] [--fleet KEY]
       bin/lme runpod-bootstrap --workers 1-16 --model MODEL [options] [--fleet KEY]
       bin/lme runpod-dispatch --jobs FILE (--workers LIST|--all) --output DIR [--fleet KEY]
-      bin/lme runpod-create --workers N [--fleet KEY] [--cloud COMMUNITY|SECURE] [--container-disk-gb N] [--volume-gb N] [--dry-run|--yes] [--max-hourly-usd USD] [--max-total-hourly-usd USD]
+      bin/lme runpod-create --workers N [--fleet KEY] [--cloud COMMUNITY|SECURE] [--container-disk-gb N] [--volume-gb N] [--max-runtime-minutes MINUTES] [--max-spend-usd USD] [--dry-run|--yes] [--max-hourly-usd USD] [--max-total-hourly-usd USD]
       bin/lme runpod-destroy (--workers 1-16|--all) [--fleet KEY] [--yes]
       bin/lme start EXPERIMENT.yml [--fleet KEY] [--rerun-failed|--force]
       bin/lme status EXPERIMENT.yml [--fleet KEY]

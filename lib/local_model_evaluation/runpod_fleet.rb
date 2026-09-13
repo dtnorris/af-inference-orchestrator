@@ -2,6 +2,7 @@
 
 require "fileutils"
 require "set"
+require "time"
 require_relative "runpod_fleet_state"
 require_relative "runpod_workers"
 
@@ -36,6 +37,8 @@ module LocalModelEvaluation
       :max_fleet_hourly_rate,
       :container_disk_gb,
       :volume_gb,
+      :max_runtime_seconds,
+      :max_spend_usd,
       keyword_init: true
     )
 
@@ -120,9 +123,10 @@ module LocalModelEvaluation
       end
       env_path = File.expand_path(env_path)
       @env_file = EnvFile.new(env_path)
+      @wall_clock = wall_clock || -> { Time.now.utc }
       @fleet_state = RunpodFleetState.new(
         root: state_root || File.join(File.dirname(env_path), "output", "runpod-fleets"),
-        clock: wall_clock,
+        clock: @wall_clock,
         local_port_base:
       )
       @out = out
@@ -133,11 +137,14 @@ module LocalModelEvaluation
     attr_reader :env_file, :fleet_state, :fleet_key
 
     def preflight(worker_count:, cloud: DEFAULT_CLOUD, max_fleet_hourly_usd: DEFAULT_MAX_FLEET_HOURLY_USD,
-                  container_disk_gb: DEFAULT_CONTAINER_DISK_GB, volume_gb: DEFAULT_VOLUME_GB)
+                  container_disk_gb: DEFAULT_CONTAINER_DISK_GB, volume_gb: DEFAULT_VOLUME_GB,
+                  max_runtime_seconds: nil, max_spend_usd: nil)
       worker_count = validate_worker_count(worker_count)
       cloud = normalize_cloud(cloud)
       container_disk_gb = positive_integer(container_disk_gb, "container disk size")
       volume_gb = positive_integer(volume_gb, "workspace volume size")
+      max_runtime_seconds = optional_positive_float(max_runtime_seconds, "max runtime")
+      max_spend_usd = optional_positive_float(max_spend_usd, "max spend")
       with_fleet_state { @fleet_state.assert_no_active! }
       max_fleet_hourly_usd = positive_float(max_fleet_hourly_usd, "max fleet hourly cost")
       desired_names = (1..worker_count).map { |index| worker_name(index) }
@@ -174,7 +181,9 @@ module LocalModelEvaluation
         fleet_hourly_rate: fleet_rate,
         max_fleet_hourly_rate: max_fleet_hourly_usd,
         container_disk_gb:,
-        volume_gb:
+        volume_gb:,
+        max_runtime_seconds:,
+        max_spend_usd:
       )
     end
 
@@ -197,13 +206,17 @@ module LocalModelEvaluation
     def create(worker_count:, ssh_public_key:, preflight: nil, cloud: DEFAULT_CLOUD,
                max_fleet_hourly_usd: DEFAULT_MAX_FLEET_HOURLY_USD,
                container_disk_gb: DEFAULT_CONTAINER_DISK_GB, volume_gb: DEFAULT_VOLUME_GB,
+               max_runtime_seconds: nil, max_spend_usd: nil,
                wait_seconds: DEFAULT_WAIT_SECONDS, poll_seconds: DEFAULT_POLL_SECONDS)
       worker_count = validate_worker_count(worker_count)
       cloud = normalize_cloud(cloud)
       container_disk_gb = positive_integer(container_disk_gb, "container disk size")
       volume_gb = positive_integer(volume_gb, "workspace volume size")
+      max_runtime_seconds = optional_positive_float(max_runtime_seconds, "max runtime")
+      max_spend_usd = optional_positive_float(max_spend_usd, "max spend")
       preflight ||= self.preflight(
-        worker_count:, cloud:, max_fleet_hourly_usd:, container_disk_gb:, volume_gb:
+        worker_count:, cloud:, max_fleet_hourly_usd:, container_disk_gb:, volume_gb:,
+        max_runtime_seconds:, max_spend_usd:
       )
       if preflight.worker_count != worker_count
         raise Error, "preflight worker count does not match requested worker count"
@@ -219,6 +232,14 @@ module LocalModelEvaluation
         raise Error,
               "preflight workspace volume #{preflight.volume_gb} GB does not match requested #{volume_gb} GB"
       end
+      if preflight.max_runtime_seconds != max_runtime_seconds
+        raise Error,
+              "preflight max runtime #{preflight.max_runtime_seconds.inspect} does not match requested #{max_runtime_seconds.inspect}"
+      end
+      if preflight.max_spend_usd != max_spend_usd
+        raise Error,
+              "preflight max spend #{preflight.max_spend_usd.inspect} does not match requested #{max_spend_usd.inspect}"
+      end
 
       max_fleet_hourly_usd = positive_float(max_fleet_hourly_usd, "max fleet hourly cost")
       wait_seconds = positive_float(wait_seconds, "wait seconds", allow_zero: true)
@@ -228,6 +249,12 @@ module LocalModelEvaluation
       created = []
       workers = []
       fleet_record = nil
+      lease_started_at = lease_configured?(max_runtime_seconds, max_spend_usd) ? utc_now : nil
+      lease = build_lease(
+        started_at: lease_started_at,
+        max_runtime_seconds:,
+        max_spend_usd:
+      )
 
       begin
         (1..worker_count).each do |index|
@@ -239,9 +266,15 @@ module LocalModelEvaluation
 
           created << [index, pod_id]
           @out.puts "Created #{worker_name(index)}: #{pod_id}"
+          validate_initial_lease!(lease, preflight.fleet_hourly_rate) if lease
         end
 
-        workers = wait_until_ready(created, cloud:, wait_seconds:, poll_seconds:)
+        effective_wait_seconds = if lease
+                                   [wait_seconds, lease_remaining_seconds(lease, preflight.fleet_hourly_rate)].min
+                                 else
+                                   wait_seconds
+                                 end
+        workers = wait_until_ready(created, cloud:, wait_seconds: effective_wait_seconds, poll_seconds:)
         actual_fleet_rate = workers.sum(&:hourly_rate)
         if actual_fleet_rate > max_fleet_hourly_usd
           raise Error, format(
@@ -250,13 +283,15 @@ module LocalModelEvaluation
             max_fleet_hourly_usd
           )
         end
+        validate_initial_lease!(lease, actual_fleet_rate) if lease
 
         fleet_record = with_fleet_state do
           @fleet_state.activate(
             workers:,
             cloud:,
             gpu_id: GPU_ID,
-            image: IMAGE
+            image: IMAGE,
+            lease:
           )
         end
         write_worker_env(workers, fleet_record:)
@@ -531,6 +566,70 @@ module LocalModelEvaluation
       number
     rescue ArgumentError, TypeError
       raise Error, "#{label} must be numeric"
+    end
+
+    def optional_positive_float(value, label)
+      return nil if value.nil?
+
+      positive_float(value, label)
+    end
+
+    def lease_configured?(max_runtime_seconds, max_spend_usd)
+      !max_runtime_seconds.nil? || !max_spend_usd.nil?
+    end
+
+    def build_lease(started_at:, max_runtime_seconds:, max_spend_usd:)
+      return nil unless started_at
+
+      {
+        "started_at_utc" => started_at.iso8601,
+        "max_runtime_seconds" => max_runtime_seconds,
+        "max_spend_usd" => max_spend_usd
+      }
+    end
+
+    def validate_initial_lease!(lease, fleet_hourly_rate)
+      started_at = Time.parse(lease.fetch("started_at_utc")).utc
+      elapsed = [utc_now - started_at, 0.0].max
+      max_runtime_seconds = lease["max_runtime_seconds"]
+      if max_runtime_seconds && elapsed >= max_runtime_seconds
+        raise Error, format(
+          "runtime lease expired during provisioning after %.1f seconds; newly-created pods will be rolled back",
+          elapsed
+        )
+      end
+
+      max_spend_usd = lease["max_spend_usd"]
+      conservative_spend = fleet_hourly_rate * elapsed / 3600.0
+      if max_spend_usd && conservative_spend >= max_spend_usd
+        raise Error, format(
+          "spend lease exhausted during provisioning at estimated $%.4f; newly-created pods will be rolled back",
+          conservative_spend
+        )
+      end
+    end
+
+    def lease_remaining_seconds(lease, fleet_hourly_rate)
+      started_at = Time.parse(lease.fetch("started_at_utc")).utc
+      elapsed = [utc_now - started_at, 0.0].max
+      limits = []
+      if lease["max_runtime_seconds"]
+        limits << lease.fetch("max_runtime_seconds") - elapsed
+      end
+      if lease["max_spend_usd"]
+        spent = fleet_hourly_rate * elapsed / 3600.0
+        remaining_budget = lease.fetch("max_spend_usd") - spent
+        limits << remaining_budget * 3600.0 / fleet_hourly_rate
+      end
+      [limits.min, 0.0].max
+    end
+
+    def utc_now
+      value = @wall_clock.call
+      value = Time.parse(value.to_s) unless value.is_a?(Time)
+      value.utc
+    rescue ArgumentError
+      raise Error, "wall clock returned invalid time: #{value.inspect}"
     end
 
     def with_fleet_state

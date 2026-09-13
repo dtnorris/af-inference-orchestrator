@@ -136,6 +136,36 @@ measured model-store requirement before paid creation. The current fleet-rate
 estimate is derived from the GPU catalog rate and does not estimate storage
 charges.
 
+Long-lived fleets can add an explicit runtime and/or total-dollar lease without
+weakening the existing per-fleet and aggregate hourly caps:
+
+```bash
+bin/lme runpod-create \
+  --workers 16 \
+  --cloud SECURE \
+  --container-disk-gb 50 \
+  --volume-gb 150 \
+  --max-runtime-minutes 480 \
+  --max-spend-usd 70 \
+  --dry-run
+```
+
+On a paid create, a configured lease is persisted in fleet state and a detached
+local watchdog starts automatically. The lease clock begins immediately before
+the first paid pod-create request, so provisioning time is conservatively inside
+the runtime/spend guard. Inspect it with:
+
+```bash
+bin/lme runpod-lease status
+bin/lme runpod-status
+```
+
+This is an operator-side safety guard, not a provider-side billing limit. If the
+control-plane Mac shuts down, sleeps indefinitely, or loses network connectivity,
+the watchdog cannot delete pods until it is running and connected again. The
+spend lease uses recorded GPU rates and intentionally does not claim to cap
+storage, network, taxes, credits, provider billing granularity, or other charges.
+
 The generic dispatcher accepts independent jobs as structured JSON:
 
 ```json
