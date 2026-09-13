@@ -30,17 +30,30 @@ class AdventureIngestTest < Minitest::Test
     end
     @scorer = File.join(@root, 'scorer')
     FileUtils.mkdir_p(File.join(@scorer, 'bin'))
-    File.write(File.join(@scorer, 'bin/af-score'), <<~RUBY_SCRIPT)
-      #!/usr/bin/env ruby
-      require 'yaml'
-      abort 'inference prohibited in fixture' unless ARGV.include?('--preflight')
-      config = YAML.safe_load_file(ARGV.fetch(ARGV.index('--config') + 1))
-      File.open('preflights.yml', 'a') { |f| f.write(YAML.dump('id' => ARGV.last, 'config' => config)) }
-      if File.file?('fail')
-        warn 'missing canonical page marker'
+    File.write(File.join(@scorer, 'bin/af-score'), <<~'SH')
+      #!/bin/sh
+      set -eu
+      config=""
+      preflight=0
+      adventure_id=""
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --config) config="${2:?config required}"; shift 2 ;;
+          --preflight) preflight=1; shift ;;
+          --model|--dimension) shift 2 ;;
+          *) adventure_id="$1"; shift ;;
+        esac
+      done
+      [ "$preflight" -eq 1 ] || { echo "inference prohibited in fixture" >&2; exit 2; }
+      [ -n "$config" ] || { echo "missing config" >&2; exit 2; }
+      [ -n "$adventure_id" ] || { echo "missing adventure id" >&2; exit 2; }
+      printf '%s\n' "$adventure_id" >> preflight_ids.txt
+      cp "$config" "preflight-$adventure_id.yml"
+      if [ -f fail ]; then
+        echo "missing canonical page marker" >&2
         exit 1
-      end
-    RUBY_SCRIPT
+      fi
+    SH
     FileUtils.chmod(0o755, File.join(@scorer, 'bin/af-score'))
     @batch = make_batch
     @rows = make_rows
@@ -142,7 +155,7 @@ class AdventureIngestTest < Minitest::Test
     assert_match(/ADV-0002 — Second:.*missing canonical page marker/m, error.message)
     refute File.exist?(@batch.queue_dir)
     refute File.exist?(@batch.experiment_dir)
-    assert_equal 2, File.read(File.join(@scorer, 'preflights.yml')).scan(/^id:/).length
+    assert_equal %w[ADV-0002 ADV-0001], File.readlines(File.join(@scorer, 'preflight_ids.txt'), chomp: true)
   end
 
   def test_force_failure_preserves_existing_package
@@ -166,7 +179,7 @@ class AdventureIngestTest < Minitest::Test
   def test_dry_run_preflights_but_writes_no_queue
     snapshot = build(dry_run: true)
     assert_equal 23, snapshot.fetch('expected_calls')
-    assert File.file?(File.join(@scorer, 'preflights.yml'))
+    assert File.file?(File.join(@scorer, 'preflight_ids.txt'))
     refute File.exist?(@batch.queue_dir)
     refute File.exist?(@batch.experiment_dir)
   end
@@ -183,8 +196,9 @@ class AdventureIngestTest < Minitest::Test
       refute source.key?('inward_boundary_clamp_max_gap')
       refute source.fetch('inward_boundary_clamp_max_gap_by_adventure').key?('ADV-0002')
     end
-    preflights = YAML.load_stream(File.read(File.join(@scorer, 'preflights.yml')))
-    preflights.each { |p| assert_equal({'ADV-0001' => 2}, p.dig('config', 'source', 'inward_boundary_clamp_max_gap_by_adventure')) }
+    preflights = Dir.glob(File.join(@scorer, 'preflight-*.yml')).sort.map { |path| YAML.safe_load_file(path) }
+    assert_equal 2, preflights.length
+    preflights.each { |config| assert_equal({'ADV-0001' => 2}, config.dig('source', 'inward_boundary_clamp_max_gap_by_adventure')) }
   end
 
   def test_unapproved_or_global_clamp_override_fails

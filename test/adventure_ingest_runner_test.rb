@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 require_relative 'test_helper'
 require 'open3'
-require 'json'
 require_relative '../lib/production_backlog_runtime_contract'
 
 class AdventureIngestRunnerTest < Minitest::Test
@@ -55,35 +54,42 @@ class AdventureIngestRunnerTest < Minitest::Test
     executable('bin/verify-production-backlog', "#!/bin/sh\nexit 0\n")
     executable('verify_production_backlog.sh', "#!/bin/sh\nexit 0\n")
     executable('bin/lme', <<~'SCRIPT')
-      #!/usr/bin/env ruby
-      require 'yaml'
-      require 'json'
-      require 'fileutils'
-      abort 'only fixture run allowed' unless ARGV.shift == 'run'
-      data = YAML.safe_load_file(ARGV.fetch(0))
-      File.open('dispatch.jsonl', 'a') { |f| f.puts JSON.dump([data['dimension'], ENV['AF_LLM_MAX_TOKENS']]) }
-      dir = File.join('output', data.fetch('name'), 'runs', 'fixture')
-      FileUtils.mkdir_p(dir)
-      File.write(File.join(dir, 'metadata.json'), JSON.dump('status' => 'complete'))
+      #!/bin/sh
+      set -eu
+      [ "${1:-}" = "run" ] || { echo "only fixture run allowed" >&2; exit 2; }
+      manifest="${2:?manifest required}"
+      case_name="$(basename "$manifest" .yml)"
+      printf '%s\t%s\n' "$case_name" "${AF_LLM_MAX_TOKENS-}" >> dispatch.tsv
+      mkdir -p "output/$case_name/runs/fixture"
+      printf '{"status":"complete"}\n' > "output/$case_name/runs/fixture/metadata.json"
     SCRIPT
-    core = ProductionBacklogRuntimeContract::QWEN35_CORE_DIMENSIONS
-    excluded = ['Exploration Emphasis', 'GM Preparation Burden', 'Seriousness', 'Levels', 'GM Beginner Suitability', '# of Sessions']
-    dimensions = core + excluded
-    paths = dimensions.each_with_index.map do |dimension, index|
-      path = "experiments/case-#{index}.yml"
-      FileUtils.mkdir_p(File.join(@root, 'experiments'))
-      File.write(File.join(@root, path), YAML.dump('name' => "case-#{index}", 'dimension' => dimension, 'models' => ['qwen'],
+
+    core = ProductionBacklogRuntimeContract::QWEN35_CORE_DIMENSIONS.first
+    cases = [
+      ['core', core, ['qwen'], '8192'],
+      ['excluded', 'Levels', ['qwen'], nil],
+      ['wrong-model', core, ['gptoss'], nil]
+    ]
+    FileUtils.mkdir_p(File.join(@root, 'experiments'))
+    paths = cases.map do |name, dimension, models, _expected_tokens|
+      path = "experiments/#{name}.yml"
+      File.write(File.join(@root, path), YAML.dump('name' => name, 'dimension' => dimension, 'models' => models,
                                                 'production_contract' => {'contract_type' => 'adventure_ingest_v1'}))
       path
     end
+
     out, err, status = run_queue(queue('adventure_ingest_v1', paths))
     assert status.success?, out + err
-    calls = File.readlines(File.join(@root, 'dispatch.jsonl')).map { |line| JSON.parse(line) }
-    assert_equal core.map { |d| [d, '8192'] } + excluded.map { |d| [d, nil] }, calls
+    calls = File.readlines(File.join(@root, 'dispatch.tsv'), chomp: true).map do |line|
+      name, tokens = line.split("\t", -1)
+      [name, tokens.empty? ? nil : tokens]
+    end
+    assert_equal cases.map { |name, _dimension, _models, expected_tokens| [name, expected_tokens] }, calls
+
     FileUtils.rm_rf(File.join(@root, 'output'))
-    File.write(File.join(@root, 'dispatch.jsonl'), '')
-    out, err, status = run_queue(queue('unrelated', paths.take(1)))
+    File.write(File.join(@root, 'dispatch.tsv'), '')
+    out, err, status = run_queue(queue('unrelated', [paths.first]))
     assert status.success?, out + err
-    assert_equal [[core.first, nil]], File.readlines(File.join(@root, 'dispatch.jsonl')).map { |line| JSON.parse(line) }
+    assert_equal "core\t\n", File.read(File.join(@root, 'dispatch.tsv'))
   end
 end

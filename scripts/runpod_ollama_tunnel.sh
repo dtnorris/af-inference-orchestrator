@@ -195,7 +195,9 @@ nohup ssh \
   >"$LOG_FILE" 2>&1 &
 pid=$!
 echo "$pid" > "$PID_FILE"
-sleep 1
+if (( WAIT_SECONDS > 0 )); then
+  sleep 1
+fi
 kill -0 "$pid" 2>/dev/null || {
   cat "$LOG_FILE" >&2 || true
   rm -f "$PID_FILE"
