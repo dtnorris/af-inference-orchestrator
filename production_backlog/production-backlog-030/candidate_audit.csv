@@ -1,0 +1,33 @@
+adventure_id,adventure_title,source_book,publisher,page_count,level_start,level_end,levels_action,decision,reason
+ADV-0731,A Wily Vendor,The Adventurer's Guide to Eastern Farraway,Midnight Tower,1,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0732,The Haunted Mill,The Adventurer's Guide to Eastern Farraway,Midnight Tower,1,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0733,Gone by Nightfall,The Adventurer's Guide to Eastern Farraway,Midnight Tower,2,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0734,"Well, Well, Well",The Adventurer's Guide to Eastern Farraway,Midnight Tower,1,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0735,Barely Bottled Rage,The Adventurer's Guide to Eastern Farraway,Midnight Tower,2,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0736,The Thieves' Guild's Lair,The Adventurer's Guide to Eastern Farraway,Midnight Tower,8,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0737,Before the Times of Heroes,The Adventurer's Guide to Eastern Farraway,Midnight Tower,8,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0738,A Mysterious Request,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,1,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0739,Meat Too Good,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,1,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0740,Need Backup,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,1,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0741,The Cheat,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,1,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0742,The Delivery,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,2,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0743,Rusted!,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,1,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0744,The Stowaway,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,1,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0745,Dinner's On You,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,1,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0746,Elementally Unsound,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,1,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0747,Accusations Fly,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,3,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0748,All You Can Eat,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,1,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0749,To Be or Not to Be,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,1,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0750,Running the Gauntlet,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,1,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0751,Who Let the Cold Out?,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,1,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0752,An Attempted Coup,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,2,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0753,The Rats' Rat Problem,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,2,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0754,Steal the Red Dragon Brew,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,2,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0755,Under New Management,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,1,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0756,Dark Visitors,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,1,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0757,The Quest for Khaz Durun,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,1,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0758,The Tower of Sorcery,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,1,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0759,Lost Dog,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,1,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0760,Loose Chickens,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,1,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0761,Old Friends and New Romances,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,2,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0762,"Poor, Sweet Larry",The Seeker's Guide to Twisted Taverns,Eldermancy LLC,13,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
