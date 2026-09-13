@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "json"
 require "yaml"
 require_relative "production_backlog_runtime_contract"
 
@@ -38,5 +39,33 @@ module ProductionBacklogRunnerPolicy
   def runtime_max_tokens_for_file(contract_type:, manifest_path:)
     manifest = YAML.safe_load_file(manifest_path, aliases: true) || {}
     runtime_max_tokens_for(contract_type:, manifest:)
+  end
+
+  def manifest_status(manifest:, output_root:)
+    name = manifest.fetch("name")
+    metadata = Dir.glob(File.join(output_root, name, "runs", "*", "metadata.json")).sort
+    return "pending" if metadata.empty?
+
+    statuses = metadata.map { |path| JSON.parse(File.read(path))["status"].to_s }
+    return "complete" if statuses.all? { |status| status == "complete" }
+    return "failed" if statuses.any? { |status| status == "failed" }
+    return "running" if statuses.any? { |status| status == "running" }
+
+    "unknown"
+  rescue JSON::ParserError
+    "unknown"
+  end
+
+  def manifest_status_for_file(manifest_path:, output_root:)
+    manifest = YAML.safe_load_file(manifest_path, aliases: true) || {}
+    manifest_status(manifest:, output_root:)
+  end
+
+  def inspect_manifest_file(contract_type:, manifest_path:, output_root:)
+    manifest = YAML.safe_load_file(manifest_path, aliases: true) || {}
+    [
+      manifest_status(manifest:, output_root:),
+      runtime_max_tokens_for(contract_type:, manifest:)
+    ]
   end
 end

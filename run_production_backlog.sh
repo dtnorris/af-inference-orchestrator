@@ -27,7 +27,7 @@ SOURCE_PREFLIGHT="$REPO/bin/preflight-production-backlog-sources"
 RUNNER_POLICY="$REPO/bin/production-backlog-policy"
 
 [[ -f "$RUNNER_POLICY" ]] || { echo "ERROR: missing $RUNNER_POLICY"; exit 1; }
-POLICY_ROUTE="$(ruby "$RUNNER_POLICY" route "$SNAPSHOT")" || {
+POLICY_ROUTE="$(ruby --disable-gems "$RUNNER_POLICY" route "$SNAPSHOT")" || {
   echo "ERROR: could not resolve production backlog runner policy."
   exit 1
 }
@@ -74,32 +74,7 @@ echo "Checking runtime source resolution against the active scorer checkout..."
 
 manifest_status() {
   local manifest="$1"
-  ruby - "$manifest" "$REPO/output" <<'RUBY'
-require "json"
-require "yaml"
-manifest, output_root = ARGV
-data = YAML.safe_load_file(manifest)
-name = data.fetch("name")
-metadata = Dir.glob(File.join(output_root, name, "runs", "*", "metadata.json")).sort
-if metadata.empty?
-  print "pending"
-  exit
-end
-begin
-  statuses = metadata.map { |path| JSON.parse(File.read(path))["status"].to_s }
-  if statuses.all? { |s| s == "complete" }
-    print "complete"
-  elsif statuses.any? { |s| s == "failed" }
-    print "failed"
-  elsif statuses.any? { |s| s == "running" }
-    print "running"
-  else
-    print "unknown"
-  end
-rescue JSON::ParserError
-  print "unknown"
-end
-RUBY
+  ruby --disable-gems "$RUNNER_POLICY" status "$manifest" "$REPO/output"
 }
 
 if command -v caffeinate >/dev/null 2>&1; then
@@ -141,7 +116,17 @@ while IFS= read -r f; do
     exit 0
   fi
 
-  status=$(manifest_status "$f")
+  if ! manifest_inspection="$(ruby --disable-gems "$RUNNER_POLICY" inspect "$CONTRACT_TYPE" "$f" "$REPO/output")"; then
+    echo "ERROR: could not inspect production manifest $f"
+    exit 1
+  fi
+  status="${manifest_inspection%%$'\t'*}"
+  runtime_max_tokens="${manifest_inspection#*$'\t'}"
+  [[ "$runtime_max_tokens" != "$manifest_inspection" ]] || {
+    echo "ERROR: invalid production manifest inspection for $f"
+    exit 1
+  }
+
   case "$status" in
     complete)
       echo "[$n/$total] SKIP complete: $f"
@@ -179,11 +164,6 @@ while IFS= read -r f; do
   # adventure-ingest batches. Other qualified runtimes retain their frozen
   # limits. Also remove any caller-supplied AF_LLM_MAX_TOKENS from unrelated
   # calls so it cannot override EE/GMPB/Seriousness/etc.
-  if ! runtime_max_tokens="$(ruby "$RUNNER_POLICY" max-tokens "$CONTRACT_TYPE" "$f")"; then
-    echo "ERROR: could not resolve runtime policy for $f"
-    exit 1
-  fi
-
   if [[ "$runtime_max_tokens" == "8192" ]]; then
     echo "Operational runtime amendment: AF_LLM_MAX_TOKENS=8192 for qwen35 core dimension."
     AF_LLM_MAX_TOKENS=8192 bin/lme run "$f" || command_ok=false

@@ -4,8 +4,9 @@ require_relative "test_helper"
 require_relative "../lib/production_backlog_runner_policy"
 
 class ProductionBacklogRunnerPolicyTest < Minitest::Test
-  def manifest(dimension:, models: ["qwen"], contract_type: "adventure_ingest_v1")
+  def manifest(dimension:, models: ["qwen"], contract_type: "adventure_ingest_v1", name: "case")
     {
+      "name" => name,
       "dimension" => dimension,
       "models" => models,
       "production_contract" => { "contract_type" => contract_type }
@@ -57,5 +58,36 @@ class ProductionBacklogRunnerPolicyTest < Minitest::Test
       contract_type: "unrelated",
       manifest: manifest(dimension: core)
     )
+  end
+
+  def test_manifest_inspection_combines_live_status_and_runtime_policy
+    Dir.mktmpdir("runner-policy") do |root|
+      manifest_path = File.join(root, "case.yml")
+      output_root = File.join(root, "output")
+      core = ProductionBacklogRuntimeContract::QWEN35_CORE_DIMENSIONS.first
+      File.write(manifest_path, YAML.dump(manifest(dimension: core)))
+
+      status, max_tokens = ProductionBacklogRunnerPolicy.inspect_manifest_file(
+        contract_type: "adventure_ingest_v1",
+        manifest_path:,
+        output_root:
+      )
+      assert_equal "pending", status
+      assert_equal ProductionBacklogRuntimeContract::EXPECTED_LLM.fetch("max_tokens"), max_tokens
+
+      run_dir = File.join(output_root, "case", "runs", "fixture")
+      FileUtils.mkdir_p(run_dir)
+      File.write(File.join(run_dir, "metadata.json"), JSON.dump("status" => "complete"))
+      assert_equal(
+        "complete",
+        ProductionBacklogRunnerPolicy.manifest_status_for_file(manifest_path:, output_root:)
+      )
+
+      File.write(File.join(run_dir, "metadata.json"), "{not-json")
+      assert_equal(
+        "unknown",
+        ProductionBacklogRunnerPolicy.manifest_status_for_file(manifest_path:, output_root:)
+      )
+    end
   end
 end

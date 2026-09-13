@@ -56,9 +56,14 @@ Explicit fallback:
 USAGE
 }
 
-ts() { date '+%H:%M:%S'; }
-info() { printf '[%s] %s\n' "$(ts)" "$*"; }
-die() { printf '[%s] ERROR: %s\n' "$(ts)" "$*" >&2; exit 1; }
+if [[ "${LME_SCRIPT_TIMESTAMPS:-1}" == "0" ]]; then
+  info() { printf '%s\n' "$*"; }
+  die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+else
+  ts() { date '+%H:%M:%S'; }
+  info() { printf '[%s] %s\n' "$(ts)" "$*"; }
+  die() { printf '[%s] ERROR: %s\n' "$(ts)" "$*" >&2; exit 1; }
+fi
 
 load_repo_env() {
   [[ -f "$ENV_FILE" ]] || die "worker mode requires $ENV_FILE; copy .env.example to .env and fill in real RunPod values"
@@ -166,16 +171,19 @@ if [[ -f "$PID_FILE" ]]; then
 fi
 
 info "[1/4] Checking SSH reachability and key authentication ..."
-ssh \
-  -o BatchMode=yes \
-  -o IdentitiesOnly=yes \
-  -o StrictHostKeyChecking=accept-new \
-  -o UserKnownHostsFile="$KNOWN_HOSTS_FILE" \
-  -o ConnectTimeout=10 \
-  -p "$SSH_PORT" \
-  -i "$IDENTITY" \
-  "$SSH_USER@$HOST" \
-  'printf "direct-ssh-ok\\n"' | grep -q direct-ssh-ok || die "direct SSH authentication failed"
+ssh_probe="$(
+  ssh \
+    -o BatchMode=yes \
+    -o IdentitiesOnly=yes \
+    -o StrictHostKeyChecking=accept-new \
+    -o UserKnownHostsFile="$KNOWN_HOSTS_FILE" \
+    -o ConnectTimeout=10 \
+    -p "$SSH_PORT" \
+    -i "$IDENTITY" \
+    "$SSH_USER@$HOST" \
+    'printf "direct-ssh-ok\\n"'
+)" || die "direct SSH authentication failed"
+[[ "$ssh_probe" == *direct-ssh-ok* ]] || die "direct SSH authentication failed"
 info "Direct SSH PASS."
 
 info "[2/4] Starting background tunnel 127.0.0.1:${LOCAL_PORT} -> pod 127.0.0.1:${REMOTE_PORT} ..."

@@ -44,9 +44,14 @@ Example:
 USAGE
 }
 
-ts() { date '+%H:%M:%S'; }
-info() { printf '[%s] %s\n' "$(ts)" "$*"; }
-die() { printf '[%s] ERROR: %s\n' "$(ts)" "$*" >&2; exit 1; }
+if [[ "${LME_SCRIPT_TIMESTAMPS:-1}" == "0" ]]; then
+  info() { printf '%s\n' "$*"; }
+  die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+else
+  ts() { date '+%H:%M:%S'; }
+  info() { printf '[%s] %s\n' "$(ts)" "$*"; }
+  die() { printf '[%s] ERROR: %s\n' "$(ts)" "$*" >&2; exit 1; }
+fi
 
 while (($#)); do
   case "$1" in
@@ -109,7 +114,7 @@ esac
 SSH_STATE_DIR="$LME_RUNPOD_FLEET_DIR/ssh"
 KNOWN_HOSTS_FILE="$SSH_STATE_DIR/known_hosts-burst_${WORKER}"
 mkdir -p "$SSH_STATE_DIR"
-touch "$KNOWN_HOSTS_FILE"
+: >> "$KNOWN_HOSTS_FILE"
 chmod 600 "$KNOWN_HOSTS_FILE"
 SSH_COMMON_ARGS=(
   -o BatchMode=yes
@@ -123,11 +128,14 @@ SSH_COMMON_ARGS=(
 info "[2/4] Resolved worker $WORKER -> ${SSH_USER}@${HOST}:${SSH_PORT}"
 info "Worker-specific SSH host keys: $KNOWN_HOSTS_FILE"
 info "[3/4] Checking direct SSH reachability and key authentication ..."
-ssh \
-  "${SSH_COMMON_ARGS[@]}" \
-  -o ConnectTimeout=10 \
-  "$SSH_USER@$HOST" \
-  'printf "direct-ssh-ok\\n"' | grep -q direct-ssh-ok || die "direct SSH authentication failed"
+ssh_probe="$(
+  ssh \
+    "${SSH_COMMON_ARGS[@]}" \
+    -o ConnectTimeout=10 \
+    "$SSH_USER@$HOST" \
+    'printf "direct-ssh-ok\\n"'
+)" || die "direct SSH authentication failed"
+[[ "$ssh_probe" == *direct-ssh-ok* ]] || die "direct SSH authentication failed"
 info "Direct SSH PASS."
 
 remote_command="bash -s --"

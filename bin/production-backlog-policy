@@ -18,6 +18,20 @@ when "max-tokens"
     manifest_path: manifest
   )
   print value if value
+when "status"
+  manifest = ARGV.shift or abort "Usage: production-backlog-policy status MANIFEST.yml OUTPUT_ROOT"
+  output_root = ARGV.shift or abort "Usage: production-backlog-policy status MANIFEST.yml OUTPUT_ROOT"
+  print ProductionBacklogRunnerPolicy.manifest_status_for_file(manifest_path: manifest, output_root:)
+when "inspect"
+  contract_type = ARGV.shift or abort "Usage: production-backlog-policy inspect CONTRACT_TYPE MANIFEST.yml OUTPUT_ROOT"
+  manifest = ARGV.shift or abort "Usage: production-backlog-policy inspect CONTRACT_TYPE MANIFEST.yml OUTPUT_ROOT"
+  output_root = ARGV.shift or abort "Usage: production-backlog-policy inspect CONTRACT_TYPE MANIFEST.yml OUTPUT_ROOT"
+  status, max_tokens = ProductionBacklogRunnerPolicy.inspect_manifest_file(
+    contract_type:,
+    manifest_path: manifest,
+    output_root:
+  )
+  print "#{status}\t#{max_tokens}"
 else
-  abort "Usage: production-backlog-policy (route SNAPSHOT.yml|max-tokens CONTRACT_TYPE MANIFEST.yml)"
+  abort "Usage: production-backlog-policy (route SNAPSHOT.yml|max-tokens CONTRACT_TYPE MANIFEST.yml|status MANIFEST.yml OUTPUT_ROOT|inspect CONTRACT_TYPE MANIFEST.yml OUTPUT_ROOT)"
 end
