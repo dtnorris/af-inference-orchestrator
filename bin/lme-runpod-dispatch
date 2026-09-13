@@ -17,12 +17,13 @@ opts = {
   workers: nil,
   all: false,
   output: nil,
+  group_by_affinity: false,
   fleet: ENV.fetch("LME_RUNPOD_FLEET", LocalModelEvaluation::RunpodFleetNamespace::DEFAULT_KEY)
 }
 
 parser = OptionParser.new do |o|
-  o.banner = "Usage: bin/lme runpod-dispatch --jobs FILE (--workers LIST|--all) --output DIR [--fleet KEY]"
-  o.on("--jobs FILE", "JSON job definitions with job_id, argv, and optional env") { |v| opts[:jobs] = v }
+  o.banner = "Usage: bin/lme runpod-dispatch --jobs FILE (--workers LIST|--all) --output DIR [--group-by-affinity] [--fleet KEY]"
+  o.on("--jobs FILE", "JSON jobs with job_id, argv, optional env, and optional affinity") { |v| opts[:jobs] = v }
   o.on("--workers LIST", "Burst worker indices, e.g. 1-12 or 1,6,12") do |v|
     opts[:workers] = LocalModelEvaluation::RunpodWorkers.parse_selector(v)
   rescue LocalModelEvaluation::RunpodWorkers::Error => e
@@ -30,6 +31,7 @@ parser = OptionParser.new do |o|
   end
   o.on("--all", "Select every active worker in the current fleet") { opts[:all] = true }
   o.on("--output DIR", "Directory for manifest, job logs, and summary; matching output resumes unstarted jobs") { |v| opts[:output] = v }
+  o.on("--group-by-affinity", "Stably group equal job affinity values before dispatch; FIFO remains the default") { opts[:group_by_affinity] = true }
   o.on("--fleet KEY", "Managed RunPod fleet key") { |v| opts[:fleet] = v }
 end
 
@@ -76,7 +78,11 @@ begin
     output_dir: opts.fetch(:output),
     repo_root: ROOT
   )
-  summary = dispatcher.run(jobs:, worker_indices: opts.fetch(:workers))
+  summary = dispatcher.run(
+    jobs:,
+    worker_indices: opts.fetch(:workers),
+    group_by_affinity: opts.fetch(:group_by_affinity)
+  )
   puts "Dispatch #{summary.fetch('status')}: #{summary.fetch('completed_count')} completed, " \
        "#{summary.fetch('failed_count')} failed, #{summary.fetch('not_started_count')} not started."
   puts "Evidence: #{dispatcher.output_dir}"

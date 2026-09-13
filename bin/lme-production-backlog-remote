@@ -12,12 +12,13 @@ ENV["LME_REPO"] = ROOT
 $LOAD_PATH.unshift File.join(ROOT, "lib")
 require "production_backlog_runner_policy"
 
-opts = { workers: nil, all: false, output: nil, fleet: nil }
+opts = { workers: nil, all: false, output: nil, fleet: nil, group_by_model: false }
 parser = OptionParser.new do |o|
-  o.banner = "Usage: bin/lme-production-backlog-remote QUEUE (--workers LIST|--all) --output DIR [--fleet KEY]"
+  o.banner = "Usage: bin/lme-production-backlog-remote QUEUE (--workers LIST|--all) --output DIR [--group-by-model] [--fleet KEY]"
   o.on("--workers LIST", "Managed RunPod worker indices, e.g. 1-16 or 1,4,8") { |v| opts[:workers] = v }
   o.on("--all", "Use every active worker in the selected RunPod fleet") { opts[:all] = true }
   o.on("--output DIR", "Generic dispatch evidence directory; existing matching output resumes") { |v| opts[:output] = v }
+  o.on("--group-by-model", "Group remote jobs by frozen manifest model alias to reduce model reload thrashing") { opts[:group_by_model] = true }
   o.on("--fleet KEY", "Managed RunPod fleet key") { |v| opts[:fleet] = v }
 end
 
@@ -66,17 +67,24 @@ jobs = manifests.each_with_index.map do |manifest_arg, index|
     abort "ERROR: remote production bridge requires workers: [mac]: #{manifest_arg}"
   end
 
+  models = Array(manifest["models"]).map(&:to_s)
+  if opts[:group_by_model] && (models.length != 1 || models.first.empty?)
+    abort "ERROR: --group-by-model requires exactly one frozen manifest model: #{manifest_arg}"
+  end
+
   runtime_max_tokens = ProductionBacklogRunnerPolicy.runtime_max_tokens_for(
     contract_type:,
     manifest:
   )
   env = {}
   env["LME_RUNTIME_MAX_TOKENS"] = runtime_max_tokens.to_s if runtime_max_tokens
-  {
+  job = {
     "job_id" => format("production-%04d", index + 1),
     "argv" => ["bin/lme-production-remote-job", manifest_arg],
     "env" => env
   }
+  job["affinity"] = "model:#{models.first}" if opts[:group_by_model]
+  job
 end
 
 output_dir = File.expand_path(opts.fetch(:output), ROOT)
@@ -110,6 +118,7 @@ if opts[:all]
 else
   dispatch.concat(["--workers", opts.fetch(:workers)])
 end
+dispatch << "--group-by-affinity" if opts[:group_by_model]
 dispatch.concat(["--fleet", opts[:fleet]]) if opts[:fleet]
 
 puts "Remote production campaign"
@@ -117,5 +126,6 @@ puts "  Queue: #{queue_arg}"
 puts "  Frozen manifests: #{jobs.length}"
 puts "  Dispatch evidence: #{output_dir}"
 puts "  Job ledger: #{jobs_path}"
+puts "  Model grouping: #{opts[:group_by_model] ? 'enabled' : 'disabled (FIFO)'}"
 puts "  Frozen manifests are read-only; remote routing is execution-time only."
 exec(*dispatch, chdir: ROOT)

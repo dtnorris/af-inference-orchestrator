@@ -50,7 +50,7 @@ class ProductionBacklogRemoteTest < Minitest::Test
 
     core = ProductionBacklogRuntimeContract::QWEN35_CORE_DIMENSIONS.first
     first = manifest("experiments/core.yml", dimension: core)
-    second = manifest("experiments/excluded.yml", dimension: "Levels")
+    second = manifest("experiments/excluded.yml", dimension: "Levels", model: "gptoss")
     first_before = File.binread(first)
     second_before = File.binread(second)
     queue = queue_for(%w[experiments/core.yml experiments/excluded.yml])
@@ -61,6 +61,7 @@ class ProductionBacklogRemoteTest < Minitest::Test
       File.join(@root, "bin", "lme-production-backlog-remote"),
       queue,
       "--all",
+      "--group-by-model",
       "--output", "output/remote-campaign"
     )
 
@@ -75,9 +76,11 @@ class ProductionBacklogRemoteTest < Minitest::Test
     assert_equal ["bin/lme-production-remote-job", "experiments/core.yml"], jobs.first.fetch("argv")
     assert_equal({ "LME_RUNTIME_MAX_TOKENS" => "8192" }, jobs.first.fetch("env"))
     assert_equal({}, jobs.last.fetch("env"))
+    assert_equal %w[model:qwen model:gptoss], jobs.map { |job| job.fetch("affinity") }
 
     argv = JSON.parse(File.read(File.join(@root, "dispatch-argv.json")))
     assert_includes argv, "--all"
+    assert_includes argv, "--group-by-affinity"
     assert_includes argv, File.join(@root, "output", "remote-campaign")
     env = JSON.parse(File.read(File.join(@root, "dispatch-env.json")))
     assert_equal "phase6-v0.3", env.fetch("social")
@@ -173,7 +176,7 @@ class ProductionBacklogRemoteTest < Minitest::Test
     FileUtils.chmod(0o755, target)
   end
 
-  def manifest(path, dimension:)
+  def manifest(path, dimension:, model: "qwen")
     target = File.join(@root, path)
     FileUtils.mkdir_p(File.dirname(target))
     File.write(
@@ -181,7 +184,7 @@ class ProductionBacklogRemoteTest < Minitest::Test
       YAML.dump(
         "name" => File.basename(path, ".yml"),
         "dimension" => dimension,
-        "models" => ["qwen"],
+        "models" => [model],
         "workers" => ["mac"],
         "production_contract" => { "contract_type" => "adventure_ingest_v1" }
       )

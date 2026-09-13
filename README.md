@@ -174,6 +174,7 @@ The generic dispatcher accepts independent jobs as structured JSON:
     {
       "job_id": "attempt-001",
       "argv": ["/path/to/workload", "--attempt", "1"],
+      "affinity": "model:qwen3.6:35b-a3b",
       "env": { "WORKLOAD_SETTING": "value" }
     }
   ]
@@ -186,6 +187,20 @@ bin/lme runpod-dispatch \
   --workers 1-4 \
   --output output/runpod-dispatch/example
 ```
+
+FIFO remains the default. For mixed-model queues, jobs may declare an optional
+`affinity` string and the dispatcher can stably group equal values before they
+enter the shared worker queue:
+
+```bash
+bin/lme runpod-dispatch --jobs /path/to/jobs.json --workers 1-4 \
+  --group-by-affinity --output output/runpod-dispatch/grouped
+```
+
+Affinity groups follow first appearance in the job file and preserve FIFO order
+within each group. Untagged jobs form one group. Grouping is recorded in the
+dispatch manifest and must match on resume; it is queue ordering, not a global
+barrier between groups.
 
 Each worker runs at most one job at a time. The dispatcher injects `LME_JOB_ID`,
 `LME_WORKER_INDEX`, and `LME_OLLAMA_URL`, uses argv execution without a shell,

@@ -298,6 +298,74 @@ class RunpodDispatcherTest < Minitest::Test
     assert_equal "http://127.0.0.1:11456", metadata.fetch("worker_url")
   end
 
+  def test_affinity_grouping_is_opt_in_stable_and_preserves_fifo_within_each_group
+    mixed_jobs = [
+      { "job_id" => "a-1", "argv" => ["fake-workload", "a-1"], "env" => {}, "affinity" => "model:a" },
+      { "job_id" => "b-1", "argv" => ["fake-workload", "b-1"], "env" => {}, "affinity" => "model:b" },
+      { "job_id" => "a-2", "argv" => ["fake-workload", "a-2"], "env" => {}, "affinity" => "model:a" },
+      { "job_id" => "b-2", "argv" => ["fake-workload", "b-2"], "env" => {}, "affinity" => "model:b" },
+      { "job_id" => "plain", "argv" => ["fake-workload", "plain"], "env" => {} }
+    ]
+    fleet_state = FakeFleetState.new(1)
+
+    fifo_runner = TrackingRunner.new
+    fifo = build_dispatcher(fleet_state, fifo_runner, "affinity-fifo")
+    fifo.run(jobs: mixed_jobs, worker_indices: [1])
+
+    assert_equal %w[a-1 b-1 a-2 b-2 plain], fifo_runner.calls
+    fifo_manifest = JSON.parse(File.read(File.join(fifo.output_dir, "manifest.json")))
+    refute fifo_manifest.key?("affinity_grouping")
+    assert_equal "model:a", fifo_manifest.fetch("jobs").first.fetch("affinity")
+
+    grouped_runner = TrackingRunner.new
+    grouped = build_dispatcher(fleet_state, grouped_runner, "affinity-grouped")
+    grouped.run(jobs: mixed_jobs, worker_indices: [1], group_by_affinity: true)
+
+    assert_equal %w[a-1 a-2 b-1 b-2 plain], grouped_runner.calls
+    grouped_manifest = JSON.parse(File.read(File.join(grouped.output_dir, "manifest.json")))
+    assert_equal true, grouped_manifest.fetch("affinity_grouping")
+    assert_equal(
+      ["model:a", "model:b", "model:a", "model:b", nil],
+      grouped_manifest.fetch("jobs").map { |job| job["affinity"] }
+    )
+  end
+
+  def test_resume_refuses_to_change_affinity_grouping_mode
+    affinity_jobs = [
+      { "job_id" => "a-1", "argv" => ["fake-workload", "a-1"], "env" => {}, "affinity" => "model:a" },
+      { "job_id" => "b-1", "argv" => ["fake-workload", "b-1"], "env" => {}, "affinity" => "model:b" }
+    ]
+    fleet_state = FakeFleetState.new(1)
+    first_runner = TrackingRunner.new
+    first = build_dispatcher(fleet_state, first_runner, "affinity-resume-mode")
+    first.run(jobs: affinity_jobs, worker_indices: [1], group_by_affinity: true)
+
+    resume_runner = TrackingRunner.new
+    resumed = build_dispatcher(fleet_state, resume_runner, "affinity-resume-mode")
+    error = assert_raises(LocalModelEvaluation::RunpodDispatcher::Error) do
+      resumed.run(jobs: affinity_jobs, worker_indices: [1])
+    end
+
+    assert_includes error.message, "affinity grouping does not match requested dispatch"
+    assert_empty resume_runner.calls
+  end
+
+  def test_affinity_must_be_a_bounded_non_empty_string
+    fleet_state = FakeFleetState.new(1)
+    dispatcher = build_dispatcher(fleet_state, TrackingRunner.new, "invalid-affinity")
+    invalid_job = {
+      "job_id" => "bad-affinity",
+      "argv" => ["fake-workload"],
+      "env" => {},
+      "affinity" => ""
+    }
+
+    error = assert_raises(LocalModelEvaluation::RunpodDispatcher::Error) do
+      dispatcher.run(jobs: [invalid_job], worker_indices: [1], group_by_affinity: true)
+    end
+    assert_includes error.message, "affinity must be a non-empty string"
+  end
+
   private
 
   def jobs(count)

@@ -55,17 +55,17 @@ module LocalModelEvaluation
 
     attr_reader :output_dir
 
-    def run(jobs:, worker_indices:)
+    def run(jobs:, worker_indices:, group_by_affinity: false)
       jobs = normalize_jobs(jobs)
       raise Error, "at least one job is required" if jobs.empty?
 
       fleet = active_fleet!
       workers = selected_workers(fleet, worker_indices)
       started_at = utc_now
-      pending_jobs = prepare_output!(fleet:, workers:, jobs:, started_at:)
+      pending_jobs = prepare_output!(fleet:, workers:, jobs:, started_at:, group_by_affinity:)
 
       queue = Queue.new
-      pending_jobs.each { |job| queue << job }
+      ordered_jobs(pending_jobs, group_by_affinity:).each { |job| queue << job }
       threads = workers.map do |worker|
         Thread.new { worker_loop(queue, fleet.fetch("fleet_id"), worker) }
       end
@@ -106,13 +106,38 @@ module LocalModelEvaluation
           raise Error, "job #{job_id} may not override dispatcher environment: #{reserved.join(', ')}"
         end
 
-        { "job_id" => job_id, "argv" => argv, "env" => env }
+        affinity = hash["affinity"]
+        if hash.key?("affinity")
+          unless affinity.is_a?(String) && !affinity.empty? && !affinity.include?("\0") && affinity.bytesize <= 256
+            raise Error, "job #{job_id} affinity must be a non-empty string of at most 256 bytes"
+          end
+        end
+
+        job = { "job_id" => job_id, "argv" => argv, "env" => env }
+        job["affinity"] = affinity if hash.key?("affinity")
+        job
       end
 
       duplicates = jobs.group_by { |job| job.fetch("job_id") }.select { |_id, group| group.length > 1 }.keys
       raise Error, "job_id values must be unique: #{duplicates.sort.join(', ')}" unless duplicates.empty?
 
       jobs
+    end
+
+    def ordered_jobs(jobs, group_by_affinity:)
+      return jobs unless group_by_affinity
+
+      groups = {}
+      group_order = []
+      jobs.each do |job|
+        affinity = job["affinity"]
+        unless groups.key?(affinity)
+          groups[affinity] = []
+          group_order << affinity
+        end
+        groups.fetch(affinity) << job
+      end
+      group_order.flat_map { |affinity| groups.fetch(affinity) }
     end
 
     def active_fleet!
@@ -278,18 +303,18 @@ module LocalModelEvaluation
                 "#{record.fetch('error')}"
     end
 
-    def prepare_output!(fleet:, workers:, jobs:, started_at:)
-      return prepare_resume!(jobs) if File.exist?(output_dir)
+    def prepare_output!(fleet:, workers:, jobs:, started_at:, group_by_affinity:)
+      return prepare_resume!(jobs, group_by_affinity:) if File.exist?(output_dir)
 
       FileUtils.mkdir_p(File.join(output_dir, "jobs"))
       write_json(
         File.join(output_dir, "manifest.json"),
-        manifest(fleet:, workers:, jobs:, started_at:)
+        manifest(fleet:, workers:, jobs:, started_at:, group_by_affinity:)
       )
       jobs
     end
 
-    def prepare_resume!(jobs)
+    def prepare_resume!(jobs, group_by_affinity:)
       unless File.directory?(output_dir)
         raise Error, "output path exists but is not a directory: #{output_dir}"
       end
@@ -300,7 +325,7 @@ module LocalModelEvaluation
       end
 
       existing_manifest = read_json!(manifest_path, label: "existing manifest")
-      validate_resume_manifest!(existing_manifest, jobs)
+      validate_resume_manifest!(existing_manifest, jobs, group_by_affinity:)
 
       prior_results = []
       pending_jobs = []
@@ -332,9 +357,16 @@ module LocalModelEvaluation
       pending_jobs
     end
 
-    def validate_resume_manifest!(existing_manifest, jobs)
+    def validate_resume_manifest!(existing_manifest, jobs, group_by_affinity:)
       unless existing_manifest.is_a?(Hash) && existing_manifest["schema_version"] == SCHEMA_VERSION
         raise Error, "existing manifest has unsupported schema_version"
+      end
+
+      existing_grouping = existing_manifest["affinity_grouping"] == true
+      unless existing_grouping == group_by_affinity
+        raise Error,
+              "existing output manifest affinity grouping does not match requested dispatch; " \
+              "use the original grouping mode or a new --output path"
       end
 
       expected_jobs = manifest_jobs(jobs)
@@ -362,8 +394,8 @@ module LocalModelEvaluation
       raise Error, "could not read #{label}: #{e.message}"
     end
 
-    def manifest(fleet:, workers:, jobs:, started_at:)
-      {
+    def manifest(fleet:, workers:, jobs:, started_at:, group_by_affinity:)
+      document = {
         "schema_version" => SCHEMA_VERSION,
         "fleet_id" => fleet.fetch("fleet_id"),
         "started_at_utc" => started_at.iso8601,
@@ -371,15 +403,19 @@ module LocalModelEvaluation
         "job_count" => jobs.length,
         "jobs" => manifest_jobs(jobs)
       }
+      document["affinity_grouping"] = true if group_by_affinity
+      document
     end
 
     def manifest_jobs(jobs)
       jobs.map do |job|
-        {
+        projected = {
           "job_id" => job.fetch("job_id"),
           "argv" => job.fetch("argv"),
           "env_keys" => job.fetch("env").keys.sort
         }
+        projected["affinity"] = job.fetch("affinity") if job.key?("affinity")
+        projected
       end
     end
 
