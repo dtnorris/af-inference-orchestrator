@@ -15,7 +15,7 @@ workers:
 required_worker_labels:
 - local
 scorer:
-  repo: "../../../af-cli-scoring-utility-batch28"
+  repo: "../../../af-cli-scoring-utility-production"
   mode: positional
   extra_args:
   - "--config"

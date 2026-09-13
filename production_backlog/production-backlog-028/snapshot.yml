@@ -612,10 +612,10 @@ qualification_files:
   production_backlog/qualified_gm_beginner_suitability.yml: 10ba07021b9712ce52a22738069bdcecd2dc772947cab5683fb822811f7dc18f
   production_backlog/qualified_gm_preparation_burden.yml: a0c58718e62099cfc2ca34956d0c90a068b62e00450cba0e331a6287cd3a765e
   production_backlog/qualified_seriousness.yml: 5b4d23f7112b4745e36cbc90053b48daa5d004b23282d77f35792af4020e1ac5
-local_model_eval_commit: 34a2eb06ab6fe471cd1e98102fe0e0f4d152d468
+local_model_eval_commit: 5f935d093d9f5461a2fa5e846627dc0e5a617ba5
 scorer_commit: 3c1c7dc26fe2a9b600eaf507e721cc939c7865bc
-scorer_repo_path: "../af-cli-scoring-utility-batch28"
-generated_at: '2026-09-13T08:53:50-04:00'
+scorer_repo_path: "../af-cli-scoring-utility-production"
+generated_at: '2026-09-13T09:04:36-04:00'
 runtime_files:
   base:
     path: production_backlog/production-backlog-028/runtime-base.yml
