@@ -1,0 +1,28 @@
+adventure_id,adventure_title,source_book,publisher,page_count,level_start,level_end,levels_action,decision,reason
+ADV-0833,Armelin's Piper,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,2,2,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0834,Goldilocks and the Three Owlbears,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,5,5,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0835,Hazel and Gretchen,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,3,4,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0836,Red Riding Hood Blood,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,3,3,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0837,The Beauty and the Bugbear,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,3,3,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0838,The Sleeping Elven Beauty,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,10,10,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0839,Crippling Fear,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,2,3,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0840,Faces in the Dust,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,5,5,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0841,The Blind Dragon,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,5,5,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0842,Torment Tower,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,6,6,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0843,Two Face,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,4,4,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0845,The Chapel of Unending Sorrow,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,10,10,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0846,The Masquerade,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,7,7,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0847,The Red House,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,5,5,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0848,The Laboratory of Screams,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,12,12,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0849,The Silent Sewers,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,10,10,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0850,Aether Vaults,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,2,2,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0851,Cult to the Moon,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,8,8,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0852,Dark Tremors,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,10,10,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0853,Darkblade Catacomb,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,8,8,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0854,Fire Against Ice,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,5,5,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0855,Frozen Mines of Vim Turum,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,5,5,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0856,Golden Crown,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,4,4,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0857,Silver Blade,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,3,3,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0858,Haunted Mines of Titans Crawl,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,2,2,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0859,Old King Returns,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,1,1,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0844,Micro Dungeons: Vampires,Micro Dungeons Annual Compendium 2024,ND Hobbies,6,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
