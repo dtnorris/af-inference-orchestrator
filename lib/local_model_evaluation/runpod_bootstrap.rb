@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
-require "fileutils"
-require "json"
 require "securerandom"
 require "time"
+require_relative "bootstrap_store"
+require_relative "process_supervisor"
 require_relative "runpod_workers"
 
 module LocalModelEvaluation
@@ -16,7 +16,8 @@ module LocalModelEvaluation
     class Error < StandardError; end
 
     def initialize(fleet_state:, remote_setup_path:, repo_root:, out: $stdout,
-                   wall_clock: nil, monotonic_clock: nil, sleeper: nil)
+                   wall_clock: nil, monotonic_clock: nil, sleeper: nil,
+                   store: nil, process_supervisor: nil)
       @fleet_state = fleet_state
       @remote_setup_path = File.expand_path(remote_setup_path)
       @repo_root = File.expand_path(repo_root)
@@ -24,6 +25,8 @@ module LocalModelEvaluation
       @wall_clock = wall_clock || -> { Time.now.utc }
       @monotonic_clock = monotonic_clock || -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }
       @sleeper = sleeper || ->(seconds) { sleep seconds }
+      @store = store || BootstrapStore.new
+      @process_supervisor = process_supervisor || ProcessSupervisor.new
       @out.sync = true if @out.respond_to?(:sync=)
     end
 
@@ -42,14 +45,7 @@ module LocalModelEvaluation
       validate_remote_setup!
 
       bootstrap_root = @fleet_state.artifact_dir(fleet.fetch("fleet_id"), "bootstrap")
-      FileUtils.mkdir_p(bootstrap_root)
-
-      lock_path = File.join(bootstrap_root, ".lock")
-      File.open(lock_path, File::RDWR | File::CREAT, 0o600) do |lock|
-        unless lock.flock(File::LOCK_EX | File::LOCK_NB)
-          raise Error, "another bootstrap is already running for fleet #{fleet.fetch('fleet_id')}"
-        end
-
+      @store.with_lock(bootstrap_root) do
         execute_run(
           fleet:,
           workers:,
@@ -63,6 +59,8 @@ module LocalModelEvaluation
           bootstrap_root:
         )
       end
+    rescue BootstrapStore::LockUnavailable
+      raise Error, "another bootstrap is already running for fleet #{fleet.fetch('fleet_id')}"
     end
 
     private
@@ -72,9 +70,7 @@ module LocalModelEvaluation
       started_wall = utc_now
       started_mono = @monotonic_clock.call
       run_id = build_run_id(started_wall)
-      run_dir = File.join(bootstrap_root, run_id)
-      FileUtils.mkdir_p(run_dir)
-      atomic_write(File.join(bootstrap_root, "current"), "#{run_id}\n")
+      run_dir = @store.start_run(root: bootstrap_root, run_id:)
 
       record = initial_record(
         fleet:,
@@ -88,7 +84,7 @@ module LocalModelEvaluation
         started_wall:,
         run_id:
       )
-      record_path = File.join(run_dir, "bootstrap.json")
+      record_path = @store.record_path(run_dir)
       write_record(record_path, record)
 
       children = {}
@@ -286,7 +282,6 @@ module LocalModelEvaluation
 
     def spawn_worker(worker:, models:, digests:, expected_gpu:, clean:, context:, run_dir:)
       index = worker.fetch("index")
-      log_path = File.join(run_dir, "burst_#{index}.log")
       command = [@remote_setup_path, "--worker", index.to_s]
       command.concat(["--expect-gpu", expected_gpu])
       command.concat(["--min-vram-gb", ENV.fetch("RUNPOD_GPU_MEMORY_GB", "40")])
@@ -297,30 +292,15 @@ module LocalModelEvaluation
       end
       command.concat(["--context", context.to_s])
 
-      log = File.open(log_path, "w")
-      pid = Process.spawn(
-        *command,
-        chdir: @repo_root,
-        in: File::NULL,
-        out: log,
-        err: [:child, :out],
-        pgroup: true
-      )
-      { pid:, log_path: }
+      log = @store.open_worker_log(run_dir:, worker_index: index)
+      pid = @process_supervisor.spawn(command:, chdir: @repo_root, output: log.io)
+      { pid:, log_path: log.path }
     ensure
-      log&.close
+      @store.close_worker_log(log) if defined?(log) && log
     end
 
     def wait_nonblocking(pid)
-      Process.waitpid2(pid, Process::WNOHANG)
-    rescue Errno::ECHILD
-      [pid, synthetic_failed_status]
-    end
-
-    def synthetic_failed_status
-      Struct.new(:exitstatus) do
-        def success? = false
-      end.new(nil)
+      @process_supervisor.poll(pid)
     end
 
     def progress_for(path)
@@ -438,14 +418,7 @@ module LocalModelEvaluation
     end
 
     def log_tail(path)
-      return "" unless File.file?(path)
-
-      File.open(path, "rb") do |file|
-        file.seek(-[file.size, LOG_TAIL_BYTES].min, IO::SEEK_END)
-        sanitize_text(file.read.to_s)
-      end
-    rescue Errno::ENOENT
-      ""
+      sanitize_text(@store.log_tail(path, max_bytes: LOG_TAIL_BYTES))
     end
 
     def sanitize_text(value)
@@ -511,7 +484,7 @@ module LocalModelEvaluation
 
     def terminate_children(children)
       remaining = children.values.map { |child| child.fetch(:pid) }.uniq
-      remaining.each { |pid| signal_group("TERM", pid) }
+      remaining.each { |pid| @process_supervisor.signal_group("TERM", pid) }
       deadline = @monotonic_clock.call + TERMINATION_GRACE_SECONDS
 
       until remaining.empty? || @monotonic_clock.call >= deadline
@@ -522,18 +495,8 @@ module LocalModelEvaluation
         @sleeper.call(0.05) unless remaining.empty?
       end
 
-      remaining.each { |pid| signal_group("KILL", pid) }
-      remaining.each do |pid|
-        Process.waitpid(pid)
-      rescue Errno::ECHILD
-        nil
-      end
-    end
-
-    def signal_group(signal, pid)
-      Process.kill(signal, -pid)
-    rescue Errno::ESRCH
-      nil
+      remaining.each { |pid| @process_supervisor.signal_group("KILL", pid) }
+      remaining.each { |pid| @process_supervisor.wait(pid) }
     end
 
     def initial_record(fleet:, workers:, models:, digests:, expected_gpu:, clean:, context:,
@@ -579,16 +542,7 @@ module LocalModelEvaluation
     end
 
     def write_record(path, record)
-      atomic_write(path, JSON.pretty_generate(record) + "\n")
-    end
-
-    def atomic_write(path, content)
-      FileUtils.mkdir_p(File.dirname(path))
-      tmp = "#{path}.tmp.#{$$}.#{Thread.current.object_id}"
-      File.write(tmp, content)
-      File.rename(tmp, path)
-    ensure
-      File.delete(tmp) if defined?(tmp) && tmp && File.exist?(tmp)
+      @store.write_record(path:, record:)
     end
 
     def build_run_id(timestamp)
@@ -596,8 +550,12 @@ module LocalModelEvaluation
     end
 
     def validate_remote_setup!
-      raise Error, "remote bootstrap wrapper not found: #{@remote_setup_path}" unless File.file?(@remote_setup_path)
-      raise Error, "remote bootstrap wrapper is not executable: #{@remote_setup_path}" unless File.executable?(@remote_setup_path)
+      unless @process_supervisor.file?(@remote_setup_path)
+        raise Error, "remote bootstrap wrapper not found: #{@remote_setup_path}"
+      end
+      unless @process_supervisor.executable?(@remote_setup_path)
+        raise Error, "remote bootstrap wrapper is not executable: #{@remote_setup_path}"
+      end
     end
 
     def positive_float(value, label)
