@@ -1,0 +1,47 @@
+---
+name: production-backlog-035-qwen-structural-openness-adv0904-v1
+purpose: AdventureFinder production-backlog-035 row-major local production scoring
+  for ADV-0904 on Structural Openness. Preserve the frozen qualified profile; produce
+  one proposed assessment pending QC/ingestion.
+dispatch: pool
+models:
+- qwen
+dimension: Structural Openness
+adventures:
+- ADV-0904
+replicates: 1
+workers:
+- mac
+required_worker_labels:
+- local
+scorer:
+  repo: "../../../af-cli-scoring-utility-production"
+  mode: positional
+  extra_args:
+  - "--config"
+  - "${LME_REPO}/production_backlog/production-backlog-035/runtime-base.yml"
+production_contract:
+  contract_type: adventure_ingest_v1
+  disposition: local-qualified-adventure-ingest
+  queue: production-backlog-035
+  candidate_model: qwen
+  qualified_profile: production-base
+  source_qualification_path: production_backlog/qualified_dimensions.yml
+  source_qualification_sha256: 903992c8c42c0fc0e2ee54365d25e600e7be81c0ca1abb29d7fc9087f3e8510a
+  replicate_count: 1
+  no_favorable_rerun: true
+  external_api_cost_usd: 0.0
+  catalog_filename: 5e_Adventure_Master_Catalog_5.7.2.xlsx
+  catalog_sha256: fd88783d8cc23d274d467645c96b4b8422b41fda41edf9d11a84929460864702
+success_criteria:
+- Structured scorer output validates and remains grounded to the canonical adventure
+  source unit.
+- Use the frozen locally qualified profile for Structural Openness.
+- Preserve the single completed sample as a proposed production assessment pending
+  QC/ingestion.
+- Do not use an existing accepted score or calibration target as expected-answer context.
+stop_conditions:
+- Do not rerun a completed case to seek a more favorable sample.
+- Queue-level repeated operational failures trigger the background runner circuit
+  breaker.
+cost_cap_usd: 0.01
