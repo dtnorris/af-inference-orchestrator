@@ -29,7 +29,7 @@ parser = OptionParser.new do |o|
     raise OptionParser::InvalidArgument, e.message
   end
   o.on("--all", "Select every active worker in the current fleet") { opts[:all] = true }
-  o.on("--output DIR", "New directory for manifest, job logs, and summary") { |v| opts[:output] = v }
+  o.on("--output DIR", "Directory for manifest, job logs, and summary; matching output resumes unstarted jobs") { |v| opts[:output] = v }
   o.on("--fleet KEY", "Managed RunPod fleet key") { |v| opts[:fleet] = v }
 end
 

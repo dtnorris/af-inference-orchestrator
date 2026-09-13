@@ -141,6 +141,101 @@ class RunpodDispatcherTest < Minitest::Test
     assert File.file?(File.join(dispatcher.output_dir, "jobs", "job-01", "metadata.json"))
   end
 
+  def test_existing_output_resumes_only_unstarted_jobs_and_rebuilds_summary
+    fleet_state = FakeFleetState.new(1)
+    first_runner = TrackingRunner.new(after: lambda do |job_id|
+      fleet_state.fleet.fetch("workers").first["status"] = "destroyed" if job_id == "job-01"
+    end)
+    first_dispatcher = build_dispatcher(fleet_state, first_runner, "resume-after-infrastructure-failure")
+
+    first_summary = first_dispatcher.run(jobs: jobs(4), worker_indices: [1])
+    manifest_before = File.read(File.join(first_dispatcher.output_dir, "manifest.json"))
+    job_one_before = File.read(File.join(first_dispatcher.output_dir, "jobs", "job-01", "metadata.json"))
+
+    assert_equal "infrastructure_failed", first_summary.fetch("status")
+    assert_equal %w[job-02 job-03 job-04], first_summary.fetch("not_started_job_ids")
+
+    replacement_fleet = FakeFleetState.new(16)
+    replacement_fleet.fleet["fleet_id"] = "20260905T130000Z-replacement"
+    resume_runner = TrackingRunner.new
+    resumed = build_dispatcher(replacement_fleet, resume_runner, "resume-after-infrastructure-failure")
+    resumed_summary = resumed.run(jobs: jobs(4), worker_indices: (1..16).to_a)
+
+    assert_equal "completed", resumed_summary.fetch("status")
+    assert_equal "20260905T130000Z-replacement", resumed_summary.fetch("fleet_id")
+    assert_equal 4, resumed_summary.fetch("completed_count")
+    assert_equal 0, resumed_summary.fetch("failed_count")
+    assert_equal 0, resumed_summary.fetch("not_started_count")
+    assert_equal %w[job-02 job-03 job-04], resume_runner.calls.sort
+    assert_equal manifest_before, File.read(File.join(resumed.output_dir, "manifest.json"))
+    assert_equal job_one_before, File.read(File.join(resumed.output_dir, "jobs", "job-01", "metadata.json"))
+  end
+
+  def test_resume_preserves_failed_jobs_and_does_not_retry_them
+    fleet_state = FakeFleetState.new(1)
+    first_runner = TrackingRunner.new(fail_ids: ["job-02"], after: lambda do |job_id|
+      fleet_state.fleet.fetch("workers").first["status"] = "destroyed" if job_id == "job-02"
+    end)
+    first_dispatcher = build_dispatcher(fleet_state, first_runner, "resume-with-workload-failure")
+
+    first_summary = first_dispatcher.run(jobs: jobs(4), worker_indices: [1])
+
+    assert_equal "infrastructure_failed", first_summary.fetch("status")
+    assert_equal 1, first_summary.fetch("completed_count")
+    assert_equal 1, first_summary.fetch("failed_count")
+    assert_equal %w[job-03 job-04], first_summary.fetch("not_started_job_ids")
+
+    fleet_state.fleet.fetch("workers").first["status"] = "active"
+    resume_runner = TrackingRunner.new
+    resumed = build_dispatcher(fleet_state, resume_runner, "resume-with-workload-failure")
+    resumed_summary = resumed.run(jobs: jobs(4), worker_indices: [1])
+
+    assert_equal "workload_failed", resumed_summary.fetch("status")
+    assert_equal 3, resumed_summary.fetch("completed_count")
+    assert_equal 1, resumed_summary.fetch("failed_count")
+    assert_equal %w[job-03 job-04], resume_runner.calls
+  end
+
+  def test_resume_rejects_changed_job_plan_before_running_any_job
+    fleet_state = FakeFleetState.new(1)
+    first_runner = TrackingRunner.new
+    first_dispatcher = build_dispatcher(fleet_state, first_runner, "resume-plan-mismatch")
+    first_dispatcher.run(jobs: jobs(2), worker_indices: [1])
+
+    changed_jobs = jobs(2)
+    changed_jobs.last["argv"] = ["different-workload", "2"]
+    resume_runner = TrackingRunner.new
+    resumed = build_dispatcher(fleet_state, resume_runner, "resume-plan-mismatch")
+
+    error = assert_raises(LocalModelEvaluation::RunpodDispatcher::Error) do
+      resumed.run(jobs: changed_jobs, worker_indices: [1])
+    end
+
+    assert_includes error.message, "manifest does not match requested jobs"
+    assert_empty resume_runner.calls
+  end
+
+  def test_resume_refuses_ambiguous_running_job
+    fleet_state = FakeFleetState.new(1)
+    first_runner = TrackingRunner.new
+    first_dispatcher = build_dispatcher(fleet_state, first_runner, "resume-running")
+    first_dispatcher.run(jobs: jobs(1), worker_indices: [1])
+
+    metadata_path = File.join(first_dispatcher.output_dir, "jobs", "job-01", "metadata.json")
+    metadata = JSON.parse(File.read(metadata_path))
+    metadata["status"] = "running"
+    File.write(metadata_path, JSON.pretty_generate(metadata) + "\n")
+
+    resume_runner = TrackingRunner.new
+    resumed = build_dispatcher(fleet_state, resume_runner, "resume-running")
+    error = assert_raises(LocalModelEvaluation::RunpodDispatcher::Error) do
+      resumed.run(jobs: jobs(1), worker_indices: [1])
+    end
+
+    assert_includes error.message, "recorded as running"
+    assert_empty resume_runner.calls
+  end
+
   def test_generic_identity_and_endpoint_are_injected_without_shell_interpolation
     fleet_state = FakeFleetState.new(16)
     runner = TrackingRunner.new

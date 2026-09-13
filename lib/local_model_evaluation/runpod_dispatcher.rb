@@ -62,15 +62,11 @@ module LocalModelEvaluation
 
       fleet = active_fleet!
       workers = selected_workers(fleet, worker_indices)
-      prepare_output!
       started_at = utc_now
-      write_json(
-        File.join(output_dir, "manifest.json"),
-        manifest(fleet:, workers:, jobs:, started_at:)
-      )
+      pending_jobs = prepare_output!(fleet:, workers:, jobs:, started_at:)
 
       queue = Queue.new
-      jobs.each { |job| queue << job }
+      pending_jobs.each { |job| queue << job }
       threads = workers.map do |worker|
         Thread.new { worker_loop(queue, fleet.fetch("fleet_id"), worker) }
       end
@@ -294,10 +290,88 @@ module LocalModelEvaluation
       @out.puts "ERROR: #{record.fetch('error')}"
     end
 
-    def prepare_output!
-      raise Error, "output path already exists: #{output_dir}" if File.exist?(output_dir)
+    def prepare_output!(fleet:, workers:, jobs:, started_at:)
+      return prepare_resume!(jobs) if File.exist?(output_dir)
 
       FileUtils.mkdir_p(File.join(output_dir, "jobs"))
+      write_json(
+        File.join(output_dir, "manifest.json"),
+        manifest(fleet:, workers:, jobs:, started_at:)
+      )
+      jobs
+    end
+
+    def prepare_resume!(jobs)
+      unless File.directory?(output_dir)
+        raise Error, "output path exists but is not a directory: #{output_dir}"
+      end
+
+      manifest_path = File.join(output_dir, "manifest.json")
+      unless File.file?(manifest_path)
+        raise Error, "cannot resume output without manifest.json: #{output_dir}"
+      end
+
+      existing_manifest = read_json!(manifest_path, label: "existing manifest")
+      validate_resume_manifest!(existing_manifest, jobs)
+
+      prior_results = []
+      pending_jobs = []
+      jobs.each do |job|
+        metadata_path = File.join(output_dir, "jobs", job.fetch("job_id"), "metadata.json")
+        unless File.file?(metadata_path)
+          pending_jobs << job
+          next
+        end
+
+        metadata = read_json!(metadata_path, label: "metadata for #{job.fetch('job_id')}")
+        validate_resume_metadata!(metadata, job)
+        case metadata.fetch("status")
+        when "completed", "failed"
+          prior_results << metadata
+        when "running"
+          raise Error,
+                "job #{job.fetch('job_id')} is recorded as running; " \
+                "refusing to retry a possibly-started job automatically"
+        else
+          raise Error,
+                "job #{job.fetch('job_id')} has unsupported resume status: #{metadata.fetch('status').inspect}"
+        end
+      end
+
+      @state_mutex.synchronize { @results.concat(prior_results) }
+      @out.puts "Resuming dispatch: #{prior_results.length} terminal job(s) preserved; " \
+                "#{pending_jobs.length} unstarted job(s) pending."
+      pending_jobs
+    end
+
+    def validate_resume_manifest!(existing_manifest, jobs)
+      unless existing_manifest.is_a?(Hash) && existing_manifest["schema_version"] == SCHEMA_VERSION
+        raise Error, "existing manifest has unsupported schema_version"
+      end
+
+      expected_jobs = manifest_jobs(jobs)
+      unless existing_manifest["job_count"] == jobs.length && existing_manifest["jobs"] == expected_jobs
+        raise Error,
+              "existing output manifest does not match requested jobs; use a new --output path"
+      end
+    end
+
+    def validate_resume_metadata!(metadata, job)
+      unless metadata.is_a?(Hash) && metadata["schema_version"] == SCHEMA_VERSION
+        raise Error, "metadata for #{job.fetch('job_id')} has unsupported schema_version"
+      end
+      unless metadata["job_id"] == job.fetch("job_id")
+        raise Error, "metadata job_id mismatch for #{job.fetch('job_id')}"
+      end
+      raise Error, "metadata for #{job.fetch('job_id')} is missing status" unless metadata.key?("status")
+    end
+
+    def read_json!(path, label:)
+      JSON.parse(File.read(path))
+    rescue JSON::ParserError => e
+      raise Error, "#{label} is invalid JSON: #{e.message}"
+    rescue SystemCallError => e
+      raise Error, "could not read #{label}: #{e.message}"
     end
 
     def manifest(fleet:, workers:, jobs:, started_at:)
@@ -307,14 +381,18 @@ module LocalModelEvaluation
         "started_at_utc" => started_at.iso8601,
         "worker_indices" => workers.map { |worker| Integer(worker.fetch("index")) },
         "job_count" => jobs.length,
-        "jobs" => jobs.map do |job|
-          {
-            "job_id" => job.fetch("job_id"),
-            "argv" => job.fetch("argv"),
-            "env_keys" => job.fetch("env").keys.sort
-          }
-        end
+        "jobs" => manifest_jobs(jobs)
       }
+    end
+
+    def manifest_jobs(jobs)
+      jobs.map do |job|
+        {
+          "job_id" => job.fetch("job_id"),
+          "argv" => job.fetch("argv"),
+          "env_keys" => job.fetch("env").keys.sort
+        }
+      end
     end
 
     def build_summary(fleet_id:, jobs:, workers:, started_at:)
