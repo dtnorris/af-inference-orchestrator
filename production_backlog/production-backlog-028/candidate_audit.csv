@@ -1,0 +1,37 @@
+adventure_id,adventure_title,source_book,publisher,page_count,level_start,level_end,levels_action,decision,reason
+ADV-0682,Manor of the Maestro,Delve: How to Build & Survive Deadly Dungeons,Bob World Builder and Eventyr Games,13,7,10,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0683,Tomb of the Timeless One,Delve: How to Build & Survive Deadly Dungeons,Bob World Builder and Eventyr Games,8,7,10,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0684,The Spire and the Scab,"The Game Master's Book of Traps, Puzzles and Dungeons",Media Lab Books,16,1,5,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0685,Pick of the Litter,"The Game Master's Book of Traps, Puzzles and Dungeons",Media Lab Books,16,6,10,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0686,Skhalhammer Manor,"The Game Master's Book of Traps, Puzzles and Dungeons",Media Lab Books,18,7,12,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0687,Where There's Smoke...,The Game Master's Book of Non-Player Characters,Media Lab Books,14,1,5,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0688,Hidden Horrors,The Game Master's Book of Non-Player Characters,Media Lab Books,12,6,10,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0689,Upside Down,The Game Master's Book of Non-Player Characters,Media Lab Books,12,6,10,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0690,The Rotten Underbelly,Dungeon Delver's Guide,EN Publishing,3,1,1,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0691,The Serpent's Maw,Dungeon Delver's Guide,EN Publishing,3,2,2,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0692,Palace of the Amber Prince,Dungeon Delver's Guide,EN Publishing,3,3,3,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0693,The Old Number Ten Mine,Dungeon Delver's Guide,EN Publishing,3,5,5,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0694,Orden Barrow Mound,Dungeon Delver's Guide,EN Publishing,3,7,7,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0695,Sinister Submarine,Dungeon Delver's Guide,EN Publishing,3,10,10,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0696,Obsidian Peak,Dungeon Delver's Guide,EN Publishing,3,14,14,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0697,Maze of the Mountain King,Dungeon Delver's Guide,EN Publishing,3,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0763,The Clockwork Magpie,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,1,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0764,"Sweet, Sweet Mead of Mine",The Seeker's Guide to Twisted Taverns,Eldermancy LLC,1,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0765,Dear Cyrano,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,1,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0766,The Heart of the Forest,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,1,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0767,Pest Control,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,1,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0768,Secret Tombs,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,2,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0769,Worms in the Hold,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,1,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0770,Ship at Sea,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,2,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0771,Deep-Sea Encounter,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,2,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0772,The Great Pet Caper,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,1,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0773,Please Not Mutton Again…,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,1,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0774,Tunnels and Thieves!!,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,1,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0775,A Voice in the Darkness,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,1,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0776,The Dungeon of Darkness,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,16,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0777,Teapot Temple,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,14,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0778,Lost and Found,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,1,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0779,Keeping Cool,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,2,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0780,One Wedding and Lots of Funerals,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,1,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0781,The Tavern at Death's Door,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,12,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0782,The Daydream,The Seeker's Guide to Twisted Taverns,Eldermancy LLC,16,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass

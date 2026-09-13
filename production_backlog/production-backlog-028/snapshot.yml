@@ -1,0 +1,1057 @@
+---
+version: 1
+contract_type: adventure_ingest_v1
+queue: production-backlog-028
+catalog_filename: 5e_Adventure_Master_Catalog_5.6.xlsx
+catalog_path: "/Users/davidnorris/code/af-xlsx-data-sources/5e_Adventure_Master_Catalog_5.6.xlsx"
+catalog_sha256: 263e500e122bc6ad07c111ffc3bff647d1c3ee10312c735ebe6542d34b33b8da
+expected_adventure_count: 36
+expected_ordinary_calls: 396
+expected_levels_calls: 21
+expected_calls: 417
+adventures_per_pack: 5
+adventure_order:
+- ADV-0682
+- ADV-0683
+- ADV-0684
+- ADV-0685
+- ADV-0686
+- ADV-0687
+- ADV-0688
+- ADV-0689
+- ADV-0690
+- ADV-0691
+- ADV-0692
+- ADV-0693
+- ADV-0694
+- ADV-0695
+- ADV-0696
+- ADV-0697
+- ADV-0763
+- ADV-0764
+- ADV-0765
+- ADV-0766
+- ADV-0767
+- ADV-0768
+- ADV-0769
+- ADV-0770
+- ADV-0771
+- ADV-0772
+- ADV-0773
+- ADV-0774
+- ADV-0775
+- ADV-0776
+- ADV-0777
+- ADV-0778
+- ADV-0779
+- ADV-0780
+- ADV-0781
+- ADV-0782
+source_boundary_clamp_adventure_ids: []
+source_boundary_clamp_max_gaps: {}
+dimension_order:
+- "# of Sessions"
+- Exploration Emphasis
+- GM Preparation Burden
+- Combat Emphasis
+- Social Interaction Emphasis
+- Investigation Emphasis
+- Structural Openness
+- Darkness / Horror Intensity
+- Player Beginner Suitability
+- GM Beginner Suitability
+- Seriousness
+dimension_contracts:
+- name: "# of Sessions"
+  slug: nos
+  catalog_column: Number of Sessions
+  model_alias: qwen27
+  ollama_model: qwen3.6:27b
+  profile: nos-clean-blind-v1
+  qualification_path: production_backlog/qualified_number_of_sessions.yml
+  qualification_sha256: 91e26dc3d22d2f8c3f16f986edc3d183c388996599000c7072caf2a56d56a02f
+  runtime_key: base
+  qualified_scorer_baseline: 4fcd7fe84d56354a2bc22d9b815b9f170d7223ad
+- name: Exploration Emphasis
+  slug: ee
+  catalog_column: Exploration Emphasis
+  model_alias: gptoss
+  ollama_model: gpt-oss:20b
+  profile: ee-clean-reset-v0.5
+  qualification_path: production_backlog/qualified_exploration_emphasis.yml
+  qualification_sha256: 40c629b5f16d1753895b5cdf313d7ed1717152bb40ee0e2c046e844f40f24640
+  runtime_key: ee
+  qualified_scorer_baseline: 4f11e25c99b4f408f88bf7205395d31f8ab325e8
+- name: GM Preparation Burden
+  slug: gmpb
+  catalog_column: GM Preparation Burden
+  model_alias: gemma
+  ollama_model: gemma4:26b
+  profile: gmpb-v0.6-dependency-fan-out
+  qualification_path: production_backlog/qualified_gm_preparation_burden.yml
+  qualification_sha256: a0c58718e62099cfc2ca34956d0c90a068b62e00450cba0e331a6287cd3a765e
+  runtime_key: gmpb
+  qualified_scorer_baseline: 878514b6a29d132945e39559ccd714c102c190a1
+- name: Combat Emphasis
+  slug: combat
+  catalog_column: Combat Emphasis
+  model_alias: qwen
+  ollama_model: qwen3.6:35b-a3b
+  profile: production-base
+  qualification_path: production_backlog/qualified_dimensions.yml
+  qualification_sha256: 903992c8c42c0fc0e2ee54365d25e600e7be81c0ca1abb29d7fc9087f3e8510a
+  runtime_key: base
+  env_name:
+  env_value:
+  qualified_scorer_baseline:
+- name: Social Interaction Emphasis
+  slug: social
+  catalog_column: Social Interaction Emphasis
+  model_alias: qwen
+  ollama_model: qwen3.6:35b-a3b
+  profile: phase6-v0.3
+  qualification_path: production_backlog/qualified_dimensions.yml
+  qualification_sha256: 903992c8c42c0fc0e2ee54365d25e600e7be81c0ca1abb29d7fc9087f3e8510a
+  runtime_key: base
+  env_name: AF_SOCIAL_INTERACTION_GUARDRAIL_PROFILE
+  env_value: phase6-v0.3
+  qualified_scorer_baseline: e49a198b36774d47ef136699573b6db6632032bc
+- name: Investigation Emphasis
+  slug: investigation
+  catalog_column: Investigation Emphasis
+  model_alias: qwen
+  ollama_model: qwen3.6:35b-a3b
+  profile: phase6-v0.4
+  qualification_path: production_backlog/qualified_dimensions.yml
+  qualification_sha256: 903992c8c42c0fc0e2ee54365d25e600e7be81c0ca1abb29d7fc9087f3e8510a
+  runtime_key: base
+  env_name: AF_INVESTIGATION_GUARDRAIL_PROFILE
+  env_value: phase6-v0.4
+  qualified_scorer_baseline: e49a198b36774d47ef136699573b6db6632032bc
+- name: Structural Openness
+  slug: structural-openness
+  catalog_column: Structural Openness
+  model_alias: qwen
+  ollama_model: qwen3.6:35b-a3b
+  profile: production-base
+  qualification_path: production_backlog/qualified_dimensions.yml
+  qualification_sha256: 903992c8c42c0fc0e2ee54365d25e600e7be81c0ca1abb29d7fc9087f3e8510a
+  runtime_key: base
+  env_name:
+  env_value:
+  qualified_scorer_baseline:
+- name: Darkness / Horror Intensity
+  slug: darkness
+  catalog_column: Darkness / Horror Intensity
+  model_alias: qwen
+  ollama_model: qwen3.6:35b-a3b
+  profile: production-base
+  qualification_path: production_backlog/qualified_dimensions.yml
+  qualification_sha256: 903992c8c42c0fc0e2ee54365d25e600e7be81c0ca1abb29d7fc9087f3e8510a
+  runtime_key: base
+  env_name:
+  env_value:
+  qualified_scorer_baseline:
+- name: Player Beginner Suitability
+  slug: player-beginner
+  catalog_column: Player Beginner Suitability
+  model_alias: qwen
+  ollama_model: qwen3.6:35b-a3b
+  profile: production-base
+  qualification_path: production_backlog/qualified_dimensions.yml
+  qualification_sha256: 903992c8c42c0fc0e2ee54365d25e600e7be81c0ca1abb29d7fc9087f3e8510a
+  runtime_key: base
+  env_name:
+  env_value:
+  qualified_scorer_baseline:
+- name: GM Beginner Suitability
+  slug: gmbs
+  catalog_column: GM Beginner Suitability
+  model_alias: qwen
+  ollama_model: qwen3.6:35b-a3b
+  profile: gmbs-clean-blind-v0.3
+  qualification_path: production_backlog/qualified_gm_beginner_suitability.yml
+  qualification_sha256: 10ba07021b9712ce52a22738069bdcecd2dc772947cab5683fb822811f7dc18f
+  runtime_key: base
+  qualified_scorer_baseline: bcdc94496ace154ab0f65131711ca36166bdd430
+- name: Seriousness
+  slug: seriousness
+  catalog_column: Seriousness
+  model_alias: qwen
+  ollama_model: qwen3.6:35b-a3b
+  profile: seriousness-reset-only
+  qualification_path: production_backlog/qualified_seriousness.yml
+  qualification_sha256: 5b4d23f7112b4745e36cbc90053b48daa5d004b23282d77f35792af4020e1ac5
+  runtime_key: seriousness
+  qualified_scorer_baseline: c5f27d1060623938fa4d338340647396fb9fdc16
+conditional_dimension_order:
+- Levels
+levels_contract:
+  name: Levels
+  slug: levels
+  catalog_columns:
+  - Level Start
+  - Level End
+  model_alias: qwen
+  ollama_model: qwen3.6:35b-a3b
+  profile: levels-v2.1
+  qualification_path: production_backlog/qualified_dimensions.yml
+  qualification_sha256: 903992c8c42c0fc0e2ee54365d25e600e7be81c0ca1abb29d7fc9087f3e8510a
+  runtime_key: base
+levels_inference_adventure_ids:
+- ADV-0697
+- ADV-0763
+- ADV-0764
+- ADV-0765
+- ADV-0766
+- ADV-0767
+- ADV-0768
+- ADV-0769
+- ADV-0770
+- ADV-0771
+- ADV-0772
+- ADV-0773
+- ADV-0774
+- ADV-0775
+- ADV-0776
+- ADV-0777
+- ADV-0778
+- ADV-0779
+- ADV-0780
+- ADV-0781
+- ADV-0782
+preserved_levels_adventure_ids:
+- ADV-0682
+- ADV-0683
+- ADV-0684
+- ADV-0685
+- ADV-0686
+- ADV-0687
+- ADV-0688
+- ADV-0689
+- ADV-0690
+- ADV-0691
+- ADV-0692
+- ADV-0693
+- ADV-0694
+- ADV-0695
+- ADV-0696
+deferred_columns:
+- Rules / System-Master Demand
+- Tactical Complexity
+- Lethality / Failure Severity
+- Puzzle / Problem-Solving Emphasis
+- Consequential Player Agency
+- Fantastic Weirdness
+- GM Improvisation Demand
+selected_adventures:
+- id: ADV-0682
+  title: Manor of the Maestro
+  source_book: 'Delve: How to Build & Survive Deadly Dungeons'
+  publisher: Bob World Builder and Eventyr Games
+  page_count: 13
+  start_page: 141
+  end_page: 153
+  level_start: 7
+  level_end: 10
+  needs_levels: false
+- id: ADV-0683
+  title: Tomb of the Timeless One
+  source_book: 'Delve: How to Build & Survive Deadly Dungeons'
+  publisher: Bob World Builder and Eventyr Games
+  page_count: 8
+  start_page: 154
+  end_page: 161
+  level_start: 7
+  level_end: 10
+  needs_levels: false
+- id: ADV-0684
+  title: The Spire and the Scab
+  source_book: The Game Master's Book of Traps, Puzzles and Dungeons
+  publisher: Media Lab Books
+  page_count: 16
+  start_page: 12
+  end_page: 27
+  level_start: 1
+  level_end: 5
+  needs_levels: false
+- id: ADV-0685
+  title: Pick of the Litter
+  source_book: The Game Master's Book of Traps, Puzzles and Dungeons
+  publisher: Media Lab Books
+  page_count: 16
+  start_page: 28
+  end_page: 43
+  level_start: 6
+  level_end: 10
+  needs_levels: false
+- id: ADV-0686
+  title: Skhalhammer Manor
+  source_book: The Game Master's Book of Traps, Puzzles and Dungeons
+  publisher: Media Lab Books
+  page_count: 18
+  start_page: 44
+  end_page: 61
+  level_start: 7
+  level_end: 12
+  needs_levels: false
+- id: ADV-0687
+  title: Where There's Smoke...
+  source_book: The Game Master's Book of Non-Player Characters
+  publisher: Media Lab Books
+  page_count: 14
+  start_page: 10
+  end_page: 23
+  level_start: 1
+  level_end: 5
+  needs_levels: false
+- id: ADV-0688
+  title: Hidden Horrors
+  source_book: The Game Master's Book of Non-Player Characters
+  publisher: Media Lab Books
+  page_count: 12
+  start_page: 24
+  end_page: 35
+  level_start: 6
+  level_end: 10
+  needs_levels: false
+- id: ADV-0689
+  title: Upside Down
+  source_book: The Game Master's Book of Non-Player Characters
+  publisher: Media Lab Books
+  page_count: 12
+  start_page: 36
+  end_page: 47
+  level_start: 6
+  level_end: 10
+  needs_levels: false
+- id: ADV-0690
+  title: The Rotten Underbelly
+  source_book: Dungeon Delver's Guide
+  publisher: EN Publishing
+  page_count: 3
+  start_page: 191
+  end_page: 193
+  level_start: 1
+  level_end: 1
+  needs_levels: false
+- id: ADV-0691
+  title: The Serpent's Maw
+  source_book: Dungeon Delver's Guide
+  publisher: EN Publishing
+  page_count: 3
+  start_page: 194
+  end_page: 196
+  level_start: 2
+  level_end: 2
+  needs_levels: false
+- id: ADV-0692
+  title: Palace of the Amber Prince
+  source_book: Dungeon Delver's Guide
+  publisher: EN Publishing
+  page_count: 3
+  start_page: 197
+  end_page: 199
+  level_start: 3
+  level_end: 3
+  needs_levels: false
+- id: ADV-0693
+  title: The Old Number Ten Mine
+  source_book: Dungeon Delver's Guide
+  publisher: EN Publishing
+  page_count: 3
+  start_page: 200
+  end_page: 202
+  level_start: 5
+  level_end: 5
+  needs_levels: false
+- id: ADV-0694
+  title: Orden Barrow Mound
+  source_book: Dungeon Delver's Guide
+  publisher: EN Publishing
+  page_count: 3
+  start_page: 203
+  end_page: 205
+  level_start: 7
+  level_end: 7
+  needs_levels: false
+- id: ADV-0695
+  title: Sinister Submarine
+  source_book: Dungeon Delver's Guide
+  publisher: EN Publishing
+  page_count: 3
+  start_page: 206
+  end_page: 208
+  level_start: 10
+  level_end: 10
+  needs_levels: false
+- id: ADV-0696
+  title: Obsidian Peak
+  source_book: Dungeon Delver's Guide
+  publisher: EN Publishing
+  page_count: 3
+  start_page: 209
+  end_page: 211
+  level_start: 14
+  level_end: 14
+  needs_levels: false
+- id: ADV-0697
+  title: Maze of the Mountain King
+  source_book: Dungeon Delver's Guide
+  publisher: EN Publishing
+  page_count: 3
+  start_page: 212
+  end_page: 214
+  level_start:
+  level_end:
+  needs_levels: true
+- id: ADV-0763
+  title: The Clockwork Magpie
+  source_book: The Seeker's Guide to Twisted Taverns
+  publisher: Eldermancy LLC
+  page_count: 1
+  start_page: 114
+  end_page: 114
+  level_start:
+  level_end:
+  needs_levels: true
+- id: ADV-0764
+  title: Sweet, Sweet Mead of Mine
+  source_book: The Seeker's Guide to Twisted Taverns
+  publisher: Eldermancy LLC
+  page_count: 1
+  start_page: 115
+  end_page: 115
+  level_start:
+  level_end:
+  needs_levels: true
+- id: ADV-0765
+  title: Dear Cyrano
+  source_book: The Seeker's Guide to Twisted Taverns
+  publisher: Eldermancy LLC
+  page_count: 1
+  start_page: 115
+  end_page: 115
+  level_start:
+  level_end:
+  needs_levels: true
+- id: ADV-0766
+  title: The Heart of the Forest
+  source_book: The Seeker's Guide to Twisted Taverns
+  publisher: Eldermancy LLC
+  page_count: 1
+  start_page: 116
+  end_page: 116
+  level_start:
+  level_end:
+  needs_levels: true
+- id: ADV-0767
+  title: Pest Control
+  source_book: The Seeker's Guide to Twisted Taverns
+  publisher: Eldermancy LLC
+  page_count: 1
+  start_page: 131
+  end_page: 131
+  level_start:
+  level_end:
+  needs_levels: true
+- id: ADV-0768
+  title: Secret Tombs
+  source_book: The Seeker's Guide to Twisted Taverns
+  publisher: Eldermancy LLC
+  page_count: 2
+  start_page: 131
+  end_page: 132
+  level_start:
+  level_end:
+  needs_levels: true
+- id: ADV-0769
+  title: Worms in the Hold
+  source_book: The Seeker's Guide to Twisted Taverns
+  publisher: Eldermancy LLC
+  page_count: 1
+  start_page: 149
+  end_page: 149
+  level_start:
+  level_end:
+  needs_levels: true
+- id: ADV-0770
+  title: Ship at Sea
+  source_book: The Seeker's Guide to Twisted Taverns
+  publisher: Eldermancy LLC
+  page_count: 2
+  start_page: 150
+  end_page: 151
+  level_start:
+  level_end:
+  needs_levels: true
+- id: ADV-0771
+  title: Deep-Sea Encounter
+  source_book: The Seeker's Guide to Twisted Taverns
+  publisher: Eldermancy LLC
+  page_count: 2
+  start_page: 168
+  end_page: 169
+  level_start:
+  level_end:
+  needs_levels: true
+- id: ADV-0772
+  title: The Great Pet Caper
+  source_book: The Seeker's Guide to Twisted Taverns
+  publisher: Eldermancy LLC
+  page_count: 1
+  start_page: 185
+  end_page: 185
+  level_start:
+  level_end:
+  needs_levels: true
+- id: ADV-0773
+  title: Please Not Mutton Again…
+  source_book: The Seeker's Guide to Twisted Taverns
+  publisher: Eldermancy LLC
+  page_count: 1
+  start_page: 200
+  end_page: 200
+  level_start:
+  level_end:
+  needs_levels: true
+- id: ADV-0774
+  title: Tunnels and Thieves!!
+  source_book: The Seeker's Guide to Twisted Taverns
+  publisher: Eldermancy LLC
+  page_count: 1
+  start_page: 201
+  end_page: 201
+  level_start:
+  level_end:
+  needs_levels: true
+- id: ADV-0775
+  title: A Voice in the Darkness
+  source_book: The Seeker's Guide to Twisted Taverns
+  publisher: Eldermancy LLC
+  page_count: 1
+  start_page: 201
+  end_page: 201
+  level_start:
+  level_end:
+  needs_levels: true
+- id: ADV-0776
+  title: The Dungeon of Darkness
+  source_book: The Seeker's Guide to Twisted Taverns
+  publisher: Eldermancy LLC
+  page_count: 16
+  start_page: 204
+  end_page: 219
+  level_start:
+  level_end:
+  needs_levels: true
+- id: ADV-0777
+  title: Teapot Temple
+  source_book: The Seeker's Guide to Twisted Taverns
+  publisher: Eldermancy LLC
+  page_count: 14
+  start_page: 220
+  end_page: 233
+  level_start:
+  level_end:
+  needs_levels: true
+- id: ADV-0778
+  title: Lost and Found
+  source_book: The Seeker's Guide to Twisted Taverns
+  publisher: Eldermancy LLC
+  page_count: 1
+  start_page: 247
+  end_page: 247
+  level_start:
+  level_end:
+  needs_levels: true
+- id: ADV-0779
+  title: Keeping Cool
+  source_book: The Seeker's Guide to Twisted Taverns
+  publisher: Eldermancy LLC
+  page_count: 2
+  start_page: 247
+  end_page: 248
+  level_start:
+  level_end:
+  needs_levels: true
+- id: ADV-0780
+  title: One Wedding and Lots of Funerals
+  source_book: The Seeker's Guide to Twisted Taverns
+  publisher: Eldermancy LLC
+  page_count: 1
+  start_page: 248
+  end_page: 248
+  level_start:
+  level_end:
+  needs_levels: true
+- id: ADV-0781
+  title: The Tavern at Death's Door
+  source_book: The Seeker's Guide to Twisted Taverns
+  publisher: Eldermancy LLC
+  page_count: 12
+  start_page: 250
+  end_page: 261
+  level_start:
+  level_end:
+  needs_levels: true
+- id: ADV-0782
+  title: The Daydream
+  source_book: The Seeker's Guide to Twisted Taverns
+  publisher: Eldermancy LLC
+  page_count: 16
+  start_page: 262
+  end_page: 277
+  level_start:
+  level_end:
+  needs_levels: true
+qualification_files:
+  production_backlog/qualified_dimensions.yml: 903992c8c42c0fc0e2ee54365d25e600e7be81c0ca1abb29d7fc9087f3e8510a
+  production_backlog/qualified_number_of_sessions.yml: 91e26dc3d22d2f8c3f16f986edc3d183c388996599000c7072caf2a56d56a02f
+  production_backlog/qualified_exploration_emphasis.yml: 40c629b5f16d1753895b5cdf313d7ed1717152bb40ee0e2c046e844f40f24640
+  production_backlog/qualified_gm_beginner_suitability.yml: 10ba07021b9712ce52a22738069bdcecd2dc772947cab5683fb822811f7dc18f
+  production_backlog/qualified_gm_preparation_burden.yml: a0c58718e62099cfc2ca34956d0c90a068b62e00450cba0e331a6287cd3a765e
+  production_backlog/qualified_seriousness.yml: 5b4d23f7112b4745e36cbc90053b48daa5d004b23282d77f35792af4020e1ac5
+local_model_eval_commit: 34a2eb06ab6fe471cd1e98102fe0e0f4d152d468
+scorer_commit: 3c1c7dc26fe2a9b600eaf507e721cc939c7865bc
+scorer_repo_path: "../af-cli-scoring-utility-batch28"
+generated_at: '2026-09-13T08:53:50-04:00'
+runtime_files:
+  base:
+    path: production_backlog/production-backlog-028/runtime-base.yml
+    sha256: 5ccf3c67992562bd77c3e02278b907afbef1f0180d2a3628d26b610a7c599cf4
+    source_path:
+    source_sha256:
+  ee:
+    path: production_backlog/production-backlog-028/runtime-ee.yml
+    sha256: a72382b64c9526b5678b96f5de9ba0bda2be40e7fd4392cc23092e7cef9e4d35
+    source_path: production_backlog/ee-v0.5-runtime.yml
+    source_sha256: 5bb44d4c2346404ae8756e90cc76e8082ec11fe4c10d0ed7688d0648ce5cf0b6
+  gmpb:
+    path: production_backlog/production-backlog-028/runtime-gmpb.yml
+    sha256: 4ae5b211f3436202c407f8afaf6ad057c6463005393bc7265aff7377616b9934
+    source_path: production_backlog/gmpb-v0.6-runtime.yml
+    source_sha256: a8f5d25af1ba2ebfc9901a92eaec072df039007f05fada1e92c9525bab5efc3a
+  seriousness:
+    path: production_backlog/production-backlog-028/runtime-seriousness.yml
+    sha256: 0a1ed3af99339a09225725f0cd0e028bc1a94084065c5507783a3478498eb877
+    source_path: production_backlog/seriousness-reset-runtime.yml
+    source_sha256: 7f8bd9f3b21280fe9904bbb30e421c5fd0ea9b6997ba8492c5f3af910b7db014
+manifest_order:
+- experiments/production-backlog-028/production-backlog-028-qwen27-nos-adv0682-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gptoss-ee-adv0682-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gemma-gmpb-adv0682-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-combat-adv0682-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-social-adv0682-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-investigation-adv0682-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-structural-openness-adv0682-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-darkness-adv0682-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-player-beginner-adv0682-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-gmbs-adv0682-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-seriousness-adv0682-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen27-nos-adv0683-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gptoss-ee-adv0683-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gemma-gmpb-adv0683-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-combat-adv0683-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-social-adv0683-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-investigation-adv0683-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-structural-openness-adv0683-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-darkness-adv0683-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-player-beginner-adv0683-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-gmbs-adv0683-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-seriousness-adv0683-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen27-nos-adv0684-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gptoss-ee-adv0684-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gemma-gmpb-adv0684-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-combat-adv0684-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-social-adv0684-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-investigation-adv0684-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-structural-openness-adv0684-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-darkness-adv0684-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-player-beginner-adv0684-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-gmbs-adv0684-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-seriousness-adv0684-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen27-nos-adv0685-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gptoss-ee-adv0685-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gemma-gmpb-adv0685-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-combat-adv0685-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-social-adv0685-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-investigation-adv0685-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-structural-openness-adv0685-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-darkness-adv0685-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-player-beginner-adv0685-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-gmbs-adv0685-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-seriousness-adv0685-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen27-nos-adv0686-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gptoss-ee-adv0686-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gemma-gmpb-adv0686-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-combat-adv0686-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-social-adv0686-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-investigation-adv0686-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-structural-openness-adv0686-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-darkness-adv0686-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-player-beginner-adv0686-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-gmbs-adv0686-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-seriousness-adv0686-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen27-nos-adv0687-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gptoss-ee-adv0687-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gemma-gmpb-adv0687-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-combat-adv0687-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-social-adv0687-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-investigation-adv0687-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-structural-openness-adv0687-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-darkness-adv0687-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-player-beginner-adv0687-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-gmbs-adv0687-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-seriousness-adv0687-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen27-nos-adv0688-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gptoss-ee-adv0688-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gemma-gmpb-adv0688-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-combat-adv0688-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-social-adv0688-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-investigation-adv0688-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-structural-openness-adv0688-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-darkness-adv0688-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-player-beginner-adv0688-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-gmbs-adv0688-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-seriousness-adv0688-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen27-nos-adv0689-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gptoss-ee-adv0689-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gemma-gmpb-adv0689-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-combat-adv0689-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-social-adv0689-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-investigation-adv0689-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-structural-openness-adv0689-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-darkness-adv0689-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-player-beginner-adv0689-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-gmbs-adv0689-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-seriousness-adv0689-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen27-nos-adv0690-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gptoss-ee-adv0690-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gemma-gmpb-adv0690-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-combat-adv0690-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-social-adv0690-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-investigation-adv0690-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-structural-openness-adv0690-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-darkness-adv0690-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-player-beginner-adv0690-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-gmbs-adv0690-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-seriousness-adv0690-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen27-nos-adv0691-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gptoss-ee-adv0691-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gemma-gmpb-adv0691-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-combat-adv0691-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-social-adv0691-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-investigation-adv0691-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-structural-openness-adv0691-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-darkness-adv0691-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-player-beginner-adv0691-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-gmbs-adv0691-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-seriousness-adv0691-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen27-nos-adv0692-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gptoss-ee-adv0692-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gemma-gmpb-adv0692-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-combat-adv0692-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-social-adv0692-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-investigation-adv0692-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-structural-openness-adv0692-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-darkness-adv0692-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-player-beginner-adv0692-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-gmbs-adv0692-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-seriousness-adv0692-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen27-nos-adv0693-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gptoss-ee-adv0693-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gemma-gmpb-adv0693-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-combat-adv0693-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-social-adv0693-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-investigation-adv0693-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-structural-openness-adv0693-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-darkness-adv0693-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-player-beginner-adv0693-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-gmbs-adv0693-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-seriousness-adv0693-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen27-nos-adv0694-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gptoss-ee-adv0694-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gemma-gmpb-adv0694-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-combat-adv0694-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-social-adv0694-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-investigation-adv0694-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-structural-openness-adv0694-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-darkness-adv0694-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-player-beginner-adv0694-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-gmbs-adv0694-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-seriousness-adv0694-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen27-nos-adv0695-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gptoss-ee-adv0695-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gemma-gmpb-adv0695-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-combat-adv0695-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-social-adv0695-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-investigation-adv0695-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-structural-openness-adv0695-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-darkness-adv0695-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-player-beginner-adv0695-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-gmbs-adv0695-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-seriousness-adv0695-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen27-nos-adv0696-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gptoss-ee-adv0696-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gemma-gmpb-adv0696-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-combat-adv0696-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-social-adv0696-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-investigation-adv0696-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-structural-openness-adv0696-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-darkness-adv0696-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-player-beginner-adv0696-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-gmbs-adv0696-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-seriousness-adv0696-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen27-nos-adv0697-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gptoss-ee-adv0697-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gemma-gmpb-adv0697-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-combat-adv0697-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-social-adv0697-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-investigation-adv0697-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-structural-openness-adv0697-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-darkness-adv0697-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-player-beginner-adv0697-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-gmbs-adv0697-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-seriousness-adv0697-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-levels-adv0697-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen27-nos-adv0763-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gptoss-ee-adv0763-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gemma-gmpb-adv0763-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-combat-adv0763-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-social-adv0763-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-investigation-adv0763-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-structural-openness-adv0763-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-darkness-adv0763-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-player-beginner-adv0763-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-gmbs-adv0763-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-seriousness-adv0763-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-levels-adv0763-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen27-nos-adv0764-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gptoss-ee-adv0764-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gemma-gmpb-adv0764-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-combat-adv0764-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-social-adv0764-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-investigation-adv0764-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-structural-openness-adv0764-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-darkness-adv0764-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-player-beginner-adv0764-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-gmbs-adv0764-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-seriousness-adv0764-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-levels-adv0764-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen27-nos-adv0765-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gptoss-ee-adv0765-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gemma-gmpb-adv0765-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-combat-adv0765-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-social-adv0765-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-investigation-adv0765-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-structural-openness-adv0765-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-darkness-adv0765-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-player-beginner-adv0765-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-gmbs-adv0765-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-seriousness-adv0765-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-levels-adv0765-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen27-nos-adv0766-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gptoss-ee-adv0766-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gemma-gmpb-adv0766-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-combat-adv0766-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-social-adv0766-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-investigation-adv0766-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-structural-openness-adv0766-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-darkness-adv0766-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-player-beginner-adv0766-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-gmbs-adv0766-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-seriousness-adv0766-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-levels-adv0766-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen27-nos-adv0767-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gptoss-ee-adv0767-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gemma-gmpb-adv0767-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-combat-adv0767-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-social-adv0767-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-investigation-adv0767-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-structural-openness-adv0767-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-darkness-adv0767-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-player-beginner-adv0767-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-gmbs-adv0767-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-seriousness-adv0767-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-levels-adv0767-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen27-nos-adv0768-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gptoss-ee-adv0768-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gemma-gmpb-adv0768-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-combat-adv0768-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-social-adv0768-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-investigation-adv0768-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-structural-openness-adv0768-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-darkness-adv0768-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-player-beginner-adv0768-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-gmbs-adv0768-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-seriousness-adv0768-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-levels-adv0768-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen27-nos-adv0769-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gptoss-ee-adv0769-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gemma-gmpb-adv0769-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-combat-adv0769-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-social-adv0769-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-investigation-adv0769-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-structural-openness-adv0769-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-darkness-adv0769-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-player-beginner-adv0769-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-gmbs-adv0769-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-seriousness-adv0769-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-levels-adv0769-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen27-nos-adv0770-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gptoss-ee-adv0770-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gemma-gmpb-adv0770-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-combat-adv0770-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-social-adv0770-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-investigation-adv0770-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-structural-openness-adv0770-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-darkness-adv0770-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-player-beginner-adv0770-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-gmbs-adv0770-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-seriousness-adv0770-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-levels-adv0770-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen27-nos-adv0771-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gptoss-ee-adv0771-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gemma-gmpb-adv0771-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-combat-adv0771-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-social-adv0771-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-investigation-adv0771-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-structural-openness-adv0771-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-darkness-adv0771-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-player-beginner-adv0771-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-gmbs-adv0771-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-seriousness-adv0771-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-levels-adv0771-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen27-nos-adv0772-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gptoss-ee-adv0772-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gemma-gmpb-adv0772-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-combat-adv0772-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-social-adv0772-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-investigation-adv0772-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-structural-openness-adv0772-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-darkness-adv0772-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-player-beginner-adv0772-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-gmbs-adv0772-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-seriousness-adv0772-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-levels-adv0772-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen27-nos-adv0773-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gptoss-ee-adv0773-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gemma-gmpb-adv0773-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-combat-adv0773-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-social-adv0773-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-investigation-adv0773-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-structural-openness-adv0773-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-darkness-adv0773-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-player-beginner-adv0773-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-gmbs-adv0773-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-seriousness-adv0773-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-levels-adv0773-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen27-nos-adv0774-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gptoss-ee-adv0774-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gemma-gmpb-adv0774-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-combat-adv0774-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-social-adv0774-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-investigation-adv0774-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-structural-openness-adv0774-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-darkness-adv0774-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-player-beginner-adv0774-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-gmbs-adv0774-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-seriousness-adv0774-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-levels-adv0774-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen27-nos-adv0775-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gptoss-ee-adv0775-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gemma-gmpb-adv0775-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-combat-adv0775-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-social-adv0775-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-investigation-adv0775-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-structural-openness-adv0775-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-darkness-adv0775-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-player-beginner-adv0775-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-gmbs-adv0775-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-seriousness-adv0775-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-levels-adv0775-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen27-nos-adv0776-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gptoss-ee-adv0776-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gemma-gmpb-adv0776-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-combat-adv0776-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-social-adv0776-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-investigation-adv0776-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-structural-openness-adv0776-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-darkness-adv0776-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-player-beginner-adv0776-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-gmbs-adv0776-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-seriousness-adv0776-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-levels-adv0776-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen27-nos-adv0777-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gptoss-ee-adv0777-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gemma-gmpb-adv0777-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-combat-adv0777-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-social-adv0777-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-investigation-adv0777-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-structural-openness-adv0777-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-darkness-adv0777-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-player-beginner-adv0777-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-gmbs-adv0777-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-seriousness-adv0777-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-levels-adv0777-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen27-nos-adv0778-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gptoss-ee-adv0778-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gemma-gmpb-adv0778-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-combat-adv0778-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-social-adv0778-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-investigation-adv0778-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-structural-openness-adv0778-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-darkness-adv0778-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-player-beginner-adv0778-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-gmbs-adv0778-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-seriousness-adv0778-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-levels-adv0778-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen27-nos-adv0779-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gptoss-ee-adv0779-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gemma-gmpb-adv0779-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-combat-adv0779-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-social-adv0779-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-investigation-adv0779-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-structural-openness-adv0779-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-darkness-adv0779-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-player-beginner-adv0779-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-gmbs-adv0779-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-seriousness-adv0779-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-levels-adv0779-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen27-nos-adv0780-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gptoss-ee-adv0780-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gemma-gmpb-adv0780-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-combat-adv0780-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-social-adv0780-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-investigation-adv0780-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-structural-openness-adv0780-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-darkness-adv0780-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-player-beginner-adv0780-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-gmbs-adv0780-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-seriousness-adv0780-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-levels-adv0780-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen27-nos-adv0781-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gptoss-ee-adv0781-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gemma-gmpb-adv0781-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-combat-adv0781-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-social-adv0781-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-investigation-adv0781-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-structural-openness-adv0781-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-darkness-adv0781-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-player-beginner-adv0781-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-gmbs-adv0781-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-seriousness-adv0781-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-levels-adv0781-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen27-nos-adv0782-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gptoss-ee-adv0782-v1.yml
+- experiments/production-backlog-028/production-backlog-028-gemma-gmpb-adv0782-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-combat-adv0782-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-social-adv0782-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-investigation-adv0782-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-structural-openness-adv0782-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-darkness-adv0782-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-player-beginner-adv0782-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-gmbs-adv0782-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-seriousness-adv0782-v1.yml
+- experiments/production-backlog-028/production-backlog-028-qwen-levels-adv0782-v1.yml
