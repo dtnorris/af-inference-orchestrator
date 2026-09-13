@@ -41,6 +41,8 @@ class RunpodCliTest < Minitest::Test
       "runpod-create",
       "--workers", "12",
       "--cloud", "SECURE",
+      "--container-disk-gb", "50",
+      "--volume-gb", "150",
       "--dry-run",
       "--ssh-public-key", @public_key,
       chdir: REPO_ROOT
@@ -50,6 +52,8 @@ class RunpodCliTest < Minitest::Test
     assert_includes stdout, "RunPod fleet preflight"
     assert_includes stdout, "Cloud: SECURE"
     assert_includes stdout, "Workers: 12"
+    assert_includes stdout, "Container disk: 50 GB"
+    assert_includes stdout, "Workspace volume: 150 GB at /workspace"
     assert_includes stdout, "Projected fleet rate: $5.2800/hr"
     assert_includes stdout, "Projected 10-minute cost: $0.8800"
     assert_includes stdout, "Projected 30-minute cost: $2.6400"

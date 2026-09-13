@@ -15,8 +15,10 @@ module LocalModelEvaluation
     SUPPORTED_CLOUDS = %w[COMMUNITY SECURE].freeze
     CLOUD = DEFAULT_CLOUD # Backward-compatible alias; new code should use preflight.cloud.
     IMAGE = "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404"
-    CONTAINER_DISK_GB = 30
-    VOLUME_GB = 60
+    DEFAULT_CONTAINER_DISK_GB = 30
+    DEFAULT_VOLUME_GB = 60
+    CONTAINER_DISK_GB = DEFAULT_CONTAINER_DISK_GB # Backward-compatible alias.
+    VOLUME_GB = DEFAULT_VOLUME_GB # Backward-compatible alias.
     VOLUME_MOUNT_PATH = "/workspace"
     DEFAULT_MAX_FLEET_HOURLY_USD = 3.0
     DEFAULT_WAIT_SECONDS = 300
@@ -32,6 +34,8 @@ module LocalModelEvaluation
       :hourly_rate,
       :fleet_hourly_rate,
       :max_fleet_hourly_rate,
+      :container_disk_gb,
+      :volume_gb,
       keyword_init: true
     )
 
@@ -128,9 +132,12 @@ module LocalModelEvaluation
 
     attr_reader :env_file, :fleet_state, :fleet_key
 
-    def preflight(worker_count:, cloud: DEFAULT_CLOUD, max_fleet_hourly_usd: DEFAULT_MAX_FLEET_HOURLY_USD)
+    def preflight(worker_count:, cloud: DEFAULT_CLOUD, max_fleet_hourly_usd: DEFAULT_MAX_FLEET_HOURLY_USD,
+                  container_disk_gb: DEFAULT_CONTAINER_DISK_GB, volume_gb: DEFAULT_VOLUME_GB)
       worker_count = validate_worker_count(worker_count)
       cloud = normalize_cloud(cloud)
+      container_disk_gb = positive_integer(container_disk_gb, "container disk size")
+      volume_gb = positive_integer(volume_gb, "workspace volume size")
       with_fleet_state { @fleet_state.assert_no_active! }
       max_fleet_hourly_usd = positive_float(max_fleet_hourly_usd, "max fleet hourly cost")
       desired_names = (1..worker_count).map { |index| worker_name(index) }
@@ -165,7 +172,9 @@ module LocalModelEvaluation
         availability:,
         hourly_rate: rate,
         fleet_hourly_rate: fleet_rate,
-        max_fleet_hourly_rate: max_fleet_hourly_usd
+        max_fleet_hourly_rate: max_fleet_hourly_usd,
+        container_disk_gb:,
+        volume_gb:
       )
     end
 
@@ -187,15 +196,28 @@ module LocalModelEvaluation
 
     def create(worker_count:, ssh_public_key:, preflight: nil, cloud: DEFAULT_CLOUD,
                max_fleet_hourly_usd: DEFAULT_MAX_FLEET_HOURLY_USD,
+               container_disk_gb: DEFAULT_CONTAINER_DISK_GB, volume_gb: DEFAULT_VOLUME_GB,
                wait_seconds: DEFAULT_WAIT_SECONDS, poll_seconds: DEFAULT_POLL_SECONDS)
       worker_count = validate_worker_count(worker_count)
       cloud = normalize_cloud(cloud)
-      preflight ||= self.preflight(worker_count:, cloud:, max_fleet_hourly_usd:)
+      container_disk_gb = positive_integer(container_disk_gb, "container disk size")
+      volume_gb = positive_integer(volume_gb, "workspace volume size")
+      preflight ||= self.preflight(
+        worker_count:, cloud:, max_fleet_hourly_usd:, container_disk_gb:, volume_gb:
+      )
       if preflight.worker_count != worker_count
         raise Error, "preflight worker count does not match requested worker count"
       end
       if preflight.cloud != cloud
         raise Error, "preflight cloud #{preflight.cloud} does not match requested cloud #{cloud}"
+      end
+      if preflight.container_disk_gb != container_disk_gb
+        raise Error,
+              "preflight container disk #{preflight.container_disk_gb} GB does not match requested #{container_disk_gb} GB"
+      end
+      if preflight.volume_gb != volume_gb
+        raise Error,
+              "preflight workspace volume #{preflight.volume_gb} GB does not match requested #{volume_gb} GB"
       end
 
       max_fleet_hourly_usd = positive_float(max_fleet_hourly_usd, "max fleet hourly cost")
@@ -209,7 +231,9 @@ module LocalModelEvaluation
 
       begin
         (1..worker_count).each do |index|
-          pod = @client.create_pod(create_body(index, ssh_public_key, cloud))
+          pod = @client.create_pod(
+            create_body(index, ssh_public_key, cloud, container_disk_gb:, volume_gb:)
+          )
           pod_id = pod["id"].to_s
           raise Error, "RunPod create response for #{worker_name(index)} did not include a pod id" if pod_id.empty?
 
@@ -308,16 +332,16 @@ module LocalModelEvaluation
 
     private
 
-    def create_body(index, ssh_public_key, cloud)
+    def create_body(index, ssh_public_key, cloud, container_disk_gb:, volume_gb:)
       {
         "name" => worker_name(index),
         "image" => IMAGE,
-        "disk" => CONTAINER_DISK_GB,
+        "disk" => container_disk_gb,
         "ports" => ["22/tcp"],
         "env" => { "PUBLIC_KEY" => ssh_public_key },
         "mounts" => {
           "persistent" => {
-            "size" => VOLUME_GB,
+            "size" => volume_gb,
             "path" => VOLUME_MOUNT_PATH
           }
         },
@@ -488,6 +512,15 @@ module LocalModelEvaluation
       return cloud if SUPPORTED_CLOUDS.include?(cloud)
 
       raise Error, "cloud must be one of: #{SUPPORTED_CLOUDS.join(', ')}"
+    end
+
+    def positive_integer(value, label)
+      number = Integer(value)
+      raise Error, "#{label} must be a positive integer" unless number.positive?
+
+      number
+    rescue ArgumentError, TypeError
+      raise Error, "#{label} must be a positive integer"
     end
 
     def positive_float(value, label, allow_zero: false)

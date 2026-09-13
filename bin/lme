@@ -174,6 +174,8 @@ def runpod_create_options(argv)
   opts = {
     workers: nil,
     cloud: LocalModelEvaluation::RunpodFleet::DEFAULT_CLOUD,
+    container_disk_gb: LocalModelEvaluation::RunpodFleet::DEFAULT_CONTAINER_DISK_GB,
+    volume_gb: LocalModelEvaluation::RunpodFleet::DEFAULT_VOLUME_GB,
     dry_run: false,
     yes: false,
     max_hourly_usd: ENV.fetch("RUNPOD_MAX_FLEET_HOURLY_USD", LocalModelEvaluation::RunpodFleet::DEFAULT_MAX_FLEET_HOURLY_USD),
@@ -185,6 +187,8 @@ def runpod_create_options(argv)
   OptionParser.new do |o|
     o.on("--workers N", Integer, "Number of burst workers (1-16)") { |v| opts[:workers] = v }
     o.on("--cloud TIER", "RunPod cloud tier: COMMUNITY or SECURE (default: COMMUNITY)") { |v| opts[:cloud] = v }
+    o.on("--container-disk-gb N", Integer, "Container/root disk size in GB") { |v| opts[:container_disk_gb] = v }
+    o.on("--volume-gb N", Integer, "Persistent /workspace volume size in GB") { |v| opts[:volume_gb] = v }
     o.on("--dry-run", "Read-only availability/cost/prerequisite check") { opts[:dry_run] = true }
     o.on("--yes", "Skip the paid-create confirmation prompt") { opts[:yes] = true }
     o.on("--max-hourly-usd USD", Float, "Fail closed above this fleet's hourly rate") { |v| opts[:max_hourly_usd] = v }
@@ -308,7 +312,9 @@ when "runpod-create"
     preflight = fleet.preflight(
       worker_count: opts[:workers],
       cloud: opts[:cloud],
-      max_fleet_hourly_usd: opts[:max_hourly_usd]
+      max_fleet_hourly_usd: opts[:max_hourly_usd],
+      container_disk_gb: opts[:container_disk_gb],
+      volume_gb: opts[:volume_gb]
     )
     ssh_public_key = fleet.read_ssh_public_key(opts[:ssh_public_key])
     current_total_rate = namespace.total_active_hourly_usd
@@ -333,6 +339,8 @@ when "runpod-create"
     puts "  Cloud: #{preflight.cloud}"
     puts "  Availability: #{preflight.availability}"
     puts "  Workers: #{preflight.worker_count}"
+    puts "  Container disk: #{preflight.container_disk_gb} GB"
+    puts "  Workspace volume: #{preflight.volume_gb} GB at #{LocalModelEvaluation::RunpodFleet::VOLUME_MOUNT_PATH}"
     puts format("  Catalog rate: $%.4f/hr per worker", preflight.hourly_rate)
     puts format("  Projected fleet rate: $%.4f/hr", preflight.fleet_hourly_rate)
     puts format("  Projected 10-minute cost: $%.4f", preflight.fleet_hourly_rate / 6.0)
@@ -369,6 +377,8 @@ when "runpod-create"
       ssh_public_key:,
       preflight:,
       max_fleet_hourly_usd: opts[:max_hourly_usd],
+      container_disk_gb: opts[:container_disk_gb],
+      volume_gb: opts[:volume_gb],
       wait_seconds: opts[:wait_seconds],
       poll_seconds: opts[:poll_seconds]
     )
@@ -542,7 +552,7 @@ else
       bin/lme runpod-tunnels [start|status|stop] [--workers 1-16|--all] [--fleet KEY]
       bin/lme runpod-bootstrap --workers 1-16 --model MODEL [options] [--fleet KEY]
       bin/lme runpod-dispatch --jobs FILE (--workers LIST|--all) --output DIR [--fleet KEY]
-      bin/lme runpod-create --workers N [--fleet KEY] [--cloud COMMUNITY|SECURE] [--dry-run|--yes] [--max-hourly-usd USD] [--max-total-hourly-usd USD]
+      bin/lme runpod-create --workers N [--fleet KEY] [--cloud COMMUNITY|SECURE] [--container-disk-gb N] [--volume-gb N] [--dry-run|--yes] [--max-hourly-usd USD] [--max-total-hourly-usd USD]
       bin/lme runpod-destroy (--workers 1-16|--all) [--fleet KEY] [--yes]
       bin/lme start EXPERIMENT.yml [--fleet KEY] [--rerun-failed|--force]
       bin/lme status EXPERIMENT.yml [--fleet KEY]

@@ -99,6 +99,8 @@ class RunpodFleetTest < Minitest::Test
     assert_equal "HIGH", result.availability
     assert_in_delta 0.69, result.hourly_rate, 0.0001
     assert_in_delta 3.45, result.fleet_hourly_rate, 0.0001
+    assert_equal 30, result.container_disk_gb
+    assert_equal 60, result.volume_gb
     assert_equal [["SECURE", 5]], @client.catalog_calls
     assert_empty @client.created_bodies
   end
@@ -163,6 +165,29 @@ class RunpodFleetTest < Minitest::Test
     assert_empty @client.created_bodies
   end
 
+  def test_preflight_rejects_non_positive_storage_before_any_api_call
+    error = assert_raises(LocalModelEvaluation::RunpodFleet::Error) do
+      @fleet.preflight(worker_count: 1, container_disk_gb: 0)
+    end
+    assert_includes error.message, "container disk size must be a positive integer"
+
+    error = assert_raises(LocalModelEvaluation::RunpodFleet::Error) do
+      @fleet.preflight(worker_count: 1, volume_gb: -1)
+    end
+    assert_includes error.message, "workspace volume size must be a positive integer"
+
+    assert_empty @client.catalog_calls
+    assert_empty @client.created_bodies
+  end
+
+  def test_preflight_preserves_requested_storage_sizes
+    result = @fleet.preflight(worker_count: 1, container_disk_gb: 50, volume_gb: 150)
+
+    assert_equal 50, result.container_disk_gb
+    assert_equal 150, result.volume_gb
+    assert_empty @client.created_bodies
+  end
+
   def test_preflight_aborts_before_creation_when_cost_exceeds_cap
     error = assert_raises(LocalModelEvaluation::RunpodFleet::Error) do
       @fleet.preflight(worker_count: 5, max_fleet_hourly_usd: 2.00)
@@ -221,6 +246,32 @@ class RunpodFleetTest < Minitest::Test
     refute_includes env, "RUNPOD_BURST_1_HOST=stale.example"
   end
 
+  def test_create_uses_requested_storage_sizes
+    @client.create_responses = [{ "id" => "pod_storage" }]
+    @client.pod_details = {
+      "pod_storage" => ready_pod(1, "pod_storage", "198.51.100.31", 22031, 0.69, cloud: "SECURE")
+    }
+    preflight = @fleet.preflight(
+      worker_count: 1,
+      max_fleet_hourly_usd: 1.0,
+      container_disk_gb: 50,
+      volume_gb: 150
+    )
+
+    @fleet.create(
+      worker_count: 1,
+      ssh_public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITest test@example",
+      preflight:,
+      max_fleet_hourly_usd: 1.0,
+      container_disk_gb: 50,
+      volume_gb: 150
+    )
+
+    body = @client.created_bodies.fetch(0)
+    assert_equal 50, body.fetch("disk")
+    assert_equal 150, body.dig("mounts", "persistent", "size")
+  end
+
   def test_secure_create_preserves_explicit_tier_in_request_and_readiness
     @client.create_responses = [{ "id" => "pod_secure" }]
     @client.pod_details = {
@@ -254,6 +305,29 @@ class RunpodFleetTest < Minitest::Test
     end
 
     assert_includes error.message, "preflight cloud SECURE does not match requested cloud COMMUNITY"
+    assert_empty @client.created_bodies
+  end
+
+  def test_create_rejects_preflight_for_different_storage_before_paid_mutation
+    preflight = @fleet.preflight(
+      worker_count: 1,
+      max_fleet_hourly_usd: 1.0,
+      container_disk_gb: 50,
+      volume_gb: 150
+    )
+
+    error = assert_raises(LocalModelEvaluation::RunpodFleet::Error) do
+      @fleet.create(
+        worker_count: 1,
+        ssh_public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITest test@example",
+        preflight:,
+        max_fleet_hourly_usd: 1.0,
+        container_disk_gb: 50,
+        volume_gb: 160
+      )
+    end
+
+    assert_includes error.message, "preflight workspace volume 150 GB does not match requested 160 GB"
     assert_empty @client.created_bodies
   end
 

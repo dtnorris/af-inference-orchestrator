@@ -118,6 +118,24 @@ Shared RunPod fleet commands support 1–16 workers. Explicit subsets remain ava
 with selectors such as `1-12`, `9-12`, or `1,6,12`; `--all` selects the active
 workers recorded in the current fleet state.
 
+RunPod pod storage remains backward-compatible at 30 GB for the container/root
+disk and 60 GB for the persistent `/workspace` volume. Size either explicitly
+when a worker must retain a larger multi-model Ollama store:
+
+```bash
+bin/lme runpod-create \
+  --workers 16 \
+  --cloud SECURE \
+  --container-disk-gb 50 \
+  --volume-gb 150 \
+  --dry-run
+```
+
+The values above are illustrative rather than new defaults; size them from the
+measured model-store requirement before paid creation. The current fleet-rate
+estimate is derived from the GPU catalog rate and does not estimate storage
+charges.
+
 The generic dispatcher accepts independent jobs as structured JSON:
 
 ```json
