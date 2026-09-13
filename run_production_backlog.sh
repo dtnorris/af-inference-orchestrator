@@ -25,8 +25,10 @@ ORDER="$QUEUE_DIR/run_order.txt"
 SNAPSHOT="$QUEUE_DIR/snapshot.yml"
 SOURCE_PREFLIGHT="$REPO/bin/preflight-production-backlog-sources"
 RUNNER_POLICY="$REPO/bin/production-backlog-policy"
+DISPATCHER="$REPO/bin/production-backlog-dispatch"
 
 [[ -f "$RUNNER_POLICY" ]] || { echo "ERROR: missing $RUNNER_POLICY"; exit 1; }
+[[ -f "$DISPATCHER" ]] || { echo "ERROR: missing $DISPATCHER"; exit 1; }
 POLICY_ROUTE="$(ruby --disable-gems "$RUNNER_POLICY" route "$SNAPSHOT")" || {
   echo "ERROR: could not resolve production backlog runner policy."
   exit 1
@@ -166,10 +168,8 @@ while IFS= read -r f; do
   # calls so it cannot override EE/GMPB/Seriousness/etc.
   if [[ "$runtime_max_tokens" == "8192" ]]; then
     echo "Operational runtime amendment: AF_LLM_MAX_TOKENS=8192 for qwen35 core dimension."
-    AF_LLM_MAX_TOKENS=8192 bin/lme run "$f" || command_ok=false
-  else
-    env -u AF_LLM_MAX_TOKENS bin/lme run "$f" || command_ok=false
   fi
+  ruby --disable-gems "$DISPATCHER" "$f" "$runtime_max_tokens" || command_ok=false
 
   status=$(manifest_status "$f")
 

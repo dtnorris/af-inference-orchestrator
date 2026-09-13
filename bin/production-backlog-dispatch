@@ -1,0 +1,13 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+$LOAD_PATH.unshift File.expand_path("../lib", __dir__)
+require "production_backlog_dispatch"
+
+manifest = ARGV.shift or abort "Usage: production-backlog-dispatch MANIFEST [RUNTIME_MAX_TOKENS]"
+runtime_max_tokens = ARGV.shift
+repo_root = ENV.fetch("LME_REPO", File.expand_path("..", __dir__))
+
+adapter = ProductionBacklogDispatch::SystemCommandAdapter.new(repo_root:)
+runner = ProductionBacklogDispatch::Runner.new(command_adapter: adapter)
+exit(runner.dispatch(manifest:, runtime_max_tokens:) ? 0 : 1)
