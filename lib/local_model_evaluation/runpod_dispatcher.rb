@@ -51,7 +51,6 @@ module LocalModelEvaluation
       @state_mutex = Mutex.new
       @results = []
       @infrastructure_failures = []
-      @dispatch_open = true
     end
 
     attr_reader :output_dir
@@ -152,33 +151,24 @@ module LocalModelEvaluation
 
     def worker_loop(queue, fleet_id, planned_worker)
       loop do
-        job = next_job(queue)
-        break unless job
-
         begin
           worker = ready_worker!(fleet_id, planned_worker)
         rescue InfrastructureError => e
           record_infrastructure_failure(planned_worker, e)
           break
         end
-        break unless dispatch_open?
+
+        job = next_job(queue)
+        break unless job
 
         execute(job, worker)
       end
     end
 
     def next_job(queue)
-      @state_mutex.synchronize do
-        return nil unless @dispatch_open
-
-        queue.pop(true)
-      rescue ThreadError
-        nil
-      end
-    end
-
-    def dispatch_open?
-      @state_mutex.synchronize { @dispatch_open }
+      queue.pop(true)
+    rescue ThreadError
+      nil
     end
 
     def ready_worker!(fleet_id, expected)
@@ -283,11 +273,9 @@ module LocalModelEvaluation
         "at_utc" => utc_now.iso8601,
         "error" => "#{error.class}: #{error.message}"
       }
-      @state_mutex.synchronize do
-        @dispatch_open = false
-        @infrastructure_failures << record
-      end
-      @out.puts "ERROR: #{record.fetch('error')}"
+      @state_mutex.synchronize { @infrastructure_failures << record }
+      @out.puts "WARN: quarantining burst_#{record.fetch('worker_index')} after infrastructure failure: " \
+                "#{record.fetch('error')}"
     end
 
     def prepare_output!(fleet:, workers:, jobs:, started_at:)
@@ -400,12 +388,13 @@ module LocalModelEvaluation
       results = @state_mutex.synchronize { @results.sort_by { |result| result.fetch("job_id") } }
       infrastructure_failures = @state_mutex.synchronize { @infrastructure_failures.dup }
       completed_ids = results.map { |result| result.fetch("job_id") }
+      not_started_count = jobs.length - results.length
       {
         "schema_version" => SCHEMA_VERSION,
         "fleet_id" => fleet_id,
         "started_at_utc" => started_at.iso8601,
         "finished_at_utc" => finished_at.iso8601,
-        "status" => if infrastructure_failures.any?
+        "status" => if not_started_count.positive?
                       "infrastructure_failed"
                     elsif results.any? { |result| result["status"] == "failed" }
                       "workload_failed"
@@ -416,7 +405,7 @@ module LocalModelEvaluation
         "job_count" => jobs.length,
         "completed_count" => results.count { |result| result["status"] == "completed" },
         "failed_count" => results.count { |result| result["status"] == "failed" },
-        "not_started_count" => jobs.length - results.length,
+        "not_started_count" => not_started_count,
         "not_started_job_ids" => jobs.map { |job| job.fetch("job_id") } - completed_ids,
         "infrastructure_failures" => infrastructure_failures,
         "jobs" => results.map do |result|

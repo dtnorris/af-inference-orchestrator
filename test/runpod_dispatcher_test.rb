@@ -29,6 +29,26 @@ class RunpodDispatcherTest < Minitest::Test
     end
   end
 
+  class WorkerDiesAfterSelectionFleetState < FakeFleetState
+    def initialize(worker_count, failed_index)
+      super(worker_count)
+      @failed_index = failed_index
+      @reads = 0
+      @failure_mutex = Mutex.new
+    end
+
+    def current
+      @failure_mutex.synchronize do
+        @reads += 1
+        if @reads > 1
+          worker = @fleet.fetch("workers").find { |candidate| candidate.fetch("index") == @failed_index }
+          worker["status"] = "destroyed"
+        end
+        super
+      end
+    end
+  end
+
   class HealthyEndpoints
     def check(_endpoint)
       Health.new(healthy: true)
@@ -124,7 +144,7 @@ class RunpodDispatcherTest < Minitest::Test
     assert File.file?(File.join(dispatcher.output_dir, "jobs", "job-01", "stdout.log"))
   end
 
-  def test_infrastructure_failure_stops_new_assignments_and_preserves_completion
+  def test_infrastructure_failure_quarantines_only_worker_and_preserves_completion
     fleet_state = FakeFleetState.new(1)
     runner = TrackingRunner.new(after: lambda do |job_id|
       fleet_state.fleet.fetch("workers").first["status"] = "destroyed" if job_id == "job-01"
@@ -139,6 +159,25 @@ class RunpodDispatcherTest < Minitest::Test
     assert_equal ["job-01"], runner.calls
     assert_includes summary.fetch("infrastructure_failures").first.fetch("error"), "is not active"
     assert File.file?(File.join(dispatcher.output_dir, "jobs", "job-01", "metadata.json"))
+  end
+
+  def test_one_worker_failure_is_quarantined_while_other_fifteen_finish_queue
+    fleet_state = WorkerDiesAfterSelectionFleetState.new(16, 16)
+    runner = TrackingRunner.new
+    dispatcher = build_dispatcher(fleet_state, runner, "quarantine-one-of-sixteen")
+
+    summary = dispatcher.run(jobs: jobs(64), worker_indices: (1..16).to_a)
+
+    assert_equal "completed", summary.fetch("status")
+    assert_equal 64, summary.fetch("completed_count")
+    assert_equal 0, summary.fetch("failed_count")
+    assert_equal 0, summary.fetch("not_started_count")
+    assert_equal 64, runner.calls.length
+    assert_equal 64, runner.calls.uniq.length
+    refute_includes runner.max_active_by_worker.keys, 16
+    failures = summary.fetch("infrastructure_failures")
+    assert_equal [16], failures.map { |failure| failure.fetch("worker_index") }
+    assert_includes failures.first.fetch("error"), "is not active"
   end
 
   def test_existing_output_resumes_only_unstarted_jobs_and_rebuilds_summary
