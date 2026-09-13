@@ -352,13 +352,109 @@ class RunpodBootstrapTest < Minitest::Test
   end
 
   def fake_remote_script(body)
-    path = File.join(@repo_root, "fake-remote-#{rand(1_000_000)}.rb")
-    File.write(path, <<~RUBY)
-      #!/usr/bin/env ruby
-      $stdout.sync = true
-      $stderr.sync = true
-      #{body}
-    RUBY
+    scenario =
+      if body.include?("ARGS=#{'#{'}ARGV.join('|')}")
+        :echo_args
+      elsif body.include?('sleep 30')
+        :interrupt
+      elsif body.include?('simulated worker failure')
+        :worker_failure
+      elsif body.include?('"b" * 64')
+        :bad_provenance
+      elsif body.include?("raise 'must not run'")
+        :must_not_run
+      elsif body.include?('[1/4] Loading worker')
+        :parallel
+      else
+        :success
+      end
+
+    shell = case scenario
+            when :parallel
+              <<~SH
+                printf '[1/4] Loading worker %s connection settings\n' "$worker"
+                printf 'Direct SSH PASS.\n'
+                printf '[1/8] Preflight host, GPU, and required utilities\n'
+                printf 'Pulling gemma4:26b to fast local/root disk.\n'
+                printf 'pulling blob: 42%%\n'
+                sleep 0.06
+                printf 'Copying completed Ollama store into /workspace/ollama-models.\n'
+                printf '10.0G 61%%\n'
+                printf '[6/8] Warm each model and verify context plus full GPU residency\n'
+                printf 'gemma4:26b verification PASS: context=131072 and 100%% model residency in VRAM.\n'
+                printf '[16:09:59] LME_PROVENANCE_GPU\tNVIDIA A40\t46068\n'
+                printf '[16:09:59] LME_PROVENANCE_MODEL\tgemma4:26b\t#{DIGEST}\t131072\t2566893074\t2566893074\n'
+                printf 'Worker setup PASS.\n'
+                printf '[16:10:00] Worker %s remote setup PASS.\n' "$worker"
+              SH
+            when :worker_failure
+              <<~SH
+                printf 'Pulling gemma4:26b to fast local/root disk.\n'
+                sleep 0.02
+                if [ "$worker" = "2" ]; then
+                  printf 'simulated worker failure\n' >&2
+                  exit 7
+                fi
+                printf 'gemma4:26b verification PASS: context=131072 and 100%% model residency in VRAM.\n'
+                printf 'LME_PROVENANCE_GPU\tNVIDIA A40\t46068\n'
+                printf 'LME_PROVENANCE_MODEL\tgemma4:26b\t#{DIGEST}\t131072\t2566893074\t2566893074\n'
+                printf 'Worker setup PASS.\n'
+                printf 'Worker %s remote setup PASS.\n' "$worker"
+              SH
+            when :echo_args
+              <<~SH
+                args=""
+                for arg in "$@"; do
+                  if [ -z "$args" ]; then args="$arg"; else args="$args|$arg"; fi
+                done
+                printf 'ARGS=%s\n' "$args"
+                stdin_bytes="$(wc -c | tr -d '[:space:]')"
+                printf 'STDIN_BYTES=%s\n' "$stdin_bytes"
+                printf 'LME_PROVENANCE_GPU\tNVIDIA A40\t46068\n'
+                printf 'LME_PROVENANCE_MODEL\tgemma4:26b\t#{DIGEST}\t262144\t2566893074\t2566893074\n'
+                printf 'Worker setup PASS.\n'
+                printf 'Worker %s remote setup PASS.\n' "$worker"
+              SH
+            when :interrupt
+              <<~SH
+                printf '[1/8] Preflight host, GPU, and required utilities\n'
+                sleep 30
+                printf 'Worker %s remote setup PASS.\n' "$worker"
+              SH
+            when :bad_provenance
+              <<~SH
+                printf 'gemma4:26b verification PASS: context=131072 and 100%% model residency in VRAM.\n'
+                printf 'LME_PROVENANCE_GPU\tNVIDIA A40\t46068\n'
+                printf 'LME_PROVENANCE_MODEL\tgemma4:26b\t#{OTHER_DIGEST}\t131072\t2566893074\t2566893074\n'
+                printf 'Worker setup PASS.\n'
+                printf 'Worker %s remote setup PASS.\n' "$worker"
+              SH
+            when :must_not_run
+              "exit 99\n"
+            else
+              <<~SH
+                printf 'LME_PROVENANCE_GPU\tNVIDIA A40\t46068\n'
+                printf 'LME_PROVENANCE_MODEL\tgemma4:26b\t#{DIGEST}\t131072\t2566893074\t2566893074\n'
+                printf 'Worker setup PASS.\n'
+                printf 'Worker %s remote setup PASS.\n' "$worker"
+              SH
+            end
+
+    path = File.join(@repo_root, "fake-remote-#{rand(1_000_000)}.sh")
+    File.write(path, <<~SH)
+      #!/bin/sh
+      set -eu
+      worker=""
+      previous=""
+      for arg in "$@"; do
+        if [ "$previous" = "--worker" ]; then
+          worker="$arg"
+          break
+        fi
+        previous="$arg"
+      done
+      #{shell}
+    SH
     File.chmod(0o755, path)
     path
   end

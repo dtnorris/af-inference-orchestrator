@@ -24,38 +24,20 @@ fi
 ORDER="$QUEUE_DIR/run_order.txt"
 SNAPSHOT="$QUEUE_DIR/snapshot.yml"
 SOURCE_PREFLIGHT="$REPO/bin/preflight-production-backlog-sources"
+RUNNER_POLICY="$REPO/bin/production-backlog-policy"
 
-CONTRACT_TYPE="$(
-  ruby - "$SNAPSHOT" <<'RUBY'
-require "yaml"
-path = ARGV.fetch(0)
-if File.file?(path)
-  snapshot = YAML.safe_load_file(path, aliases: true) || {}
-  print snapshot["contract_type"].to_s
-end
-RUBY
-)"
-
-case "$CONTRACT_TYPE" in
-  ee_local_qualified_v1)
-    VERIFY="$REPO/verify_production_backlog_ee.sh"
-    ;;
-  gmbs_local_qualified_v1)
-    VERIFY="$REPO/verify_production_backlog_gmbs.sh"
-    ;;
-  gmpb_local_qualified_v1)
-    VERIFY="$REPO/verify_production_backlog_gmpb.sh"
-    ;;
-  seriousness_local_qualified_v1)
-    VERIFY="$REPO/verify_production_backlog_seriousness.sh"
-    ;;
-  adventure_ingest_v1)
-    VERIFY="$REPO/bin/verify-production-backlog"
-    ;;
-  *)
-    VERIFY="$REPO/verify_production_backlog.sh"
-    ;;
-esac
+[[ -f "$RUNNER_POLICY" ]] || { echo "ERROR: missing $RUNNER_POLICY"; exit 1; }
+POLICY_ROUTE="$(ruby "$RUNNER_POLICY" route "$SNAPSHOT")" || {
+  echo "ERROR: could not resolve production backlog runner policy."
+  exit 1
+}
+CONTRACT_TYPE="${POLICY_ROUTE%%$'\t'*}"
+VERIFY_REL="${POLICY_ROUTE#*$'\t'}"
+[[ -n "$VERIFY_REL" && "$VERIFY_REL" != "$POLICY_ROUTE" ]] || {
+  echo "ERROR: invalid production backlog runner policy route."
+  exit 1
+}
+VERIFY="$REPO/$VERIFY_REL"
 
 cd "$REPO" || exit 1
 mkdir -p "$CONTROL_DIR"
@@ -197,23 +179,10 @@ while IFS= read -r f; do
   # adventure-ingest batches. Other qualified runtimes retain their frozen
   # limits. Also remove any caller-supplied AF_LLM_MAX_TOKENS from unrelated
   # calls so it cannot override EE/GMPB/Seriousness/etc.
-  runtime_max_tokens=""
-  case "$CONTRACT_TYPE" in
-    adventure_ingest_v1)
-      runtime_max_tokens="$(
-        ruby - "$f" "$REPO" <<'RUBY'
-require "yaml"
-require File.join(ARGV.fetch(1), "lib/production_backlog_runtime_contract")
-data = YAML.safe_load_file(ARGV.fetch(0), aliases: true) || {}
-if data.dig("production_contract", "contract_type") == "adventure_ingest_v1" &&
-   data.fetch("models", []) == ["qwen"] &&
-   ProductionBacklogRuntimeContract::QWEN35_CORE_DIMENSIONS.include?(data["dimension"])
-  print "8192"
-end
-RUBY
-      )"
-      ;;
-  esac
+  if ! runtime_max_tokens="$(ruby "$RUNNER_POLICY" max-tokens "$CONTRACT_TYPE" "$f")"; then
+    echo "ERROR: could not resolve runtime policy for $f"
+    exit 1
+  fi
 
   if [[ "$runtime_max_tokens" == "8192" ]]; then
     echo "Operational runtime amendment: AF_LLM_MAX_TOKENS=8192 for qwen35 core dimension."

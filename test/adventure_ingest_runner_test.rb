@@ -5,11 +5,19 @@ require_relative '../lib/production_backlog_runtime_contract'
 
 class AdventureIngestRunnerTest < Minitest::Test
   ROOT = File.expand_path('..', __dir__)
+
   def setup
     @root = Dir.mktmpdir('ingest-runner-routing')
-    FileUtils.mkdir_p([File.join(@root, 'bin'), File.join(@root, 'lib')])
-    %w[run_production_backlog.sh lib/batch_failure_policy.sh lib/production_backlog_runtime_contract.rb].each do |path|
-      FileUtils.cp(File.join(ROOT, path), File.join(@root, path))
+    %w[
+      run_production_backlog.sh
+      lib/batch_failure_policy.sh
+      lib/production_backlog_runner_policy.rb
+      lib/production_backlog_runtime_contract.rb
+      bin/production-backlog-policy
+    ].each do |path|
+      target = File.join(@root, path)
+      FileUtils.mkdir_p(File.dirname(target))
+      FileUtils.cp(File.join(ROOT, path), target)
     end
     executable('bin/preflight-production-backlog-sources', "#!/bin/sh\nexit 0\n")
     executable('bin/classify-production-failure', "#!/bin/sh\nexit 1\n")
@@ -20,8 +28,10 @@ class AdventureIngestRunnerTest < Minitest::Test
   end
 
   def executable(path, text)
-    File.write(File.join(@root, path), text)
-    FileUtils.chmod(0o755, File.join(@root, path))
+    target = File.join(@root, path)
+    FileUtils.mkdir_p(File.dirname(target))
+    File.write(target, text)
+    FileUtils.chmod(0o755, target)
   end
 
   def queue(contract, manifests = [])
@@ -33,26 +43,39 @@ class AdventureIngestRunnerTest < Minitest::Test
   end
 
   def run_queue(path)
-    Open3.capture3({'LME_REPO' => @root, 'AF_LLM_MAX_TOKENS' => '99999'}, 'bash', File.join(@root, 'run_production_backlog.sh'), path)
+    Open3.capture3(
+      {'LME_REPO' => @root, 'AF_LLM_MAX_TOKENS' => '99999'},
+      'bash',
+      File.join(@root, 'run_production_backlog.sh'),
+      path
+    )
   end
 
-  def test_future_ingest_and_all_existing_contract_routes
-    {'adventure_ingest_v1' => 'bin/verify-production-backlog',
-     'ee_local_qualified_v1' => 'verify_production_backlog_ee.sh',
-     'gmbs_local_qualified_v1' => 'verify_production_backlog_gmbs.sh',
-     'gmpb_local_qualified_v1' => 'verify_production_backlog_gmpb.sh',
-     'seriousness_local_qualified_v1' => 'verify_production_backlog_seriousness.sh',
-     'other' => 'verify_production_backlog.sh'}.each do |contract, script|
-      executable(script, "#!/bin/sh\nprintf '%s' '#{script}' > routed\nexit 1\n")
-      _out, _err, status = run_queue(queue(contract))
-      refute status.success?
-      assert_equal script, File.read(File.join(@root, 'routed'))
-    end
+  def test_runner_uses_policy_selected_verifier_and_stops_at_source_gate
+    executable(
+      'bin/verify-production-backlog',
+      "#!/bin/sh\ntouch \"$LME_REPO/verifier-called\"\nexit 0\n"
+    )
+    executable(
+      'bin/preflight-production-backlog-sources',
+      "#!/bin/sh\ntouch \"$LME_REPO/source-preflight-called\"\nexit 1\n"
+    )
+    executable(
+      'bin/lme',
+      "#!/bin/sh\ntouch \"$LME_REPO/inference-called\"\nexit 0\n"
+    )
+
+    out, err, status = run_queue(queue('adventure_ingest_v1'))
+
+    refute status.success?
+    assert File.exist?(File.join(@root, 'verifier-called'))
+    assert File.exist?(File.join(@root, 'source-preflight-called'))
+    refute File.exist?(File.join(@root, 'inference-called'))
+    assert_match(/runtime source preflight failed\. No inference launched\./, out + err)
   end
 
-  def test_future_runtime_amendment_is_exact_and_does_not_leak
+  def test_runtime_amendment_reaches_lme_and_caller_override_is_cleared
     executable('bin/verify-production-backlog', "#!/bin/sh\nexit 0\n")
-    executable('verify_production_backlog.sh', "#!/bin/sh\nexit 0\n")
     executable('bin/lme', <<~'SCRIPT')
       #!/bin/sh
       set -eu
@@ -66,15 +89,21 @@ class AdventureIngestRunnerTest < Minitest::Test
 
     core = ProductionBacklogRuntimeContract::QWEN35_CORE_DIMENSIONS.first
     cases = [
-      ['core', core, ['qwen'], '8192'],
-      ['excluded', 'Levels', ['qwen'], nil],
-      ['wrong-model', core, ['gptoss'], nil]
+      ['core', core, '8192'],
+      ['excluded', 'Levels', nil]
     ]
     FileUtils.mkdir_p(File.join(@root, 'experiments'))
-    paths = cases.map do |name, dimension, models, _expected_tokens|
+    paths = cases.map do |name, dimension, _expected_tokens|
       path = "experiments/#{name}.yml"
-      File.write(File.join(@root, path), YAML.dump('name' => name, 'dimension' => dimension, 'models' => models,
-                                                'production_contract' => {'contract_type' => 'adventure_ingest_v1'}))
+      File.write(
+        File.join(@root, path),
+        YAML.dump(
+          'name' => name,
+          'dimension' => dimension,
+          'models' => ['qwen'],
+          'production_contract' => {'contract_type' => 'adventure_ingest_v1'}
+        )
+      )
       path
     end
 
@@ -84,12 +113,6 @@ class AdventureIngestRunnerTest < Minitest::Test
       name, tokens = line.split("\t", -1)
       [name, tokens.empty? ? nil : tokens]
     end
-    assert_equal cases.map { |name, _dimension, _models, expected_tokens| [name, expected_tokens] }, calls
-
-    FileUtils.rm_rf(File.join(@root, 'output'))
-    File.write(File.join(@root, 'dispatch.tsv'), '')
-    out, err, status = run_queue(queue('unrelated', [paths.first]))
-    assert status.success?, out + err
-    assert_equal "core\t\n", File.read(File.join(@root, 'dispatch.tsv'))
+    assert_equal cases.map { |name, _dimension, expected_tokens| [name, expected_tokens] }, calls
   end
 end

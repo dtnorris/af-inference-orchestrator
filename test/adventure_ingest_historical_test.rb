@@ -21,10 +21,11 @@ class AdventureIngestHistoricalTest < Minitest::Test
       )
       batch.instance_variable_set(:@catalog_sha256, snapshot.fetch('catalog_sha256'))
       verifier.verify_manifests!(derived)
-      assert_equal snapshot.fetch('expected_calls'), batch.operations(derived).length
+      operations = batch.operations(derived)
+      assert_equal snapshot.fetch('expected_calls'), operations.length
       next unless number == '019'
       assert_equal 36, snapshot.fetch('expected_adventure_count')
-      assert_equal 432, batch.operations(derived).length
+      assert_equal 432, operations.length
       assert_equal (429..464).map { |id| format('ADV-%04d', id) }, snapshot.fetch('adventure_order')
       assert_equal snapshot.fetch('adventure_order'), snapshot.fetch('levels_inference_adventure_ids')
       assert_equal %w[ADV-0447 ADV-0460], snapshot.fetch('source_boundary_clamp_adventure_ids')

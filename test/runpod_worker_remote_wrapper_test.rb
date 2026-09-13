@@ -30,13 +30,12 @@ class RunpodWorkerRemoteWrapperTest < Minitest::Test
 
     fake_ssh = File.join(fake_bin, "ssh")
     File.write(fake_ssh, <<~'SH')
-      #!/usr/bin/env bash
+      #!/bin/sh
       printf '%s\n' "$*" >> "$FAKE_SSH_LOG"
-      if [[ "$*" == *"direct-ssh-ok"* ]]; then
-        printf 'direct-ssh-ok\n'
-      else
-        cat >/dev/null
-      fi
+      case "$*" in
+        *direct-ssh-ok*) printf 'direct-ssh-ok\n' ;;
+        *) cat >/dev/null ;;
+      esac
     SH
     FileUtils.chmod(0o755, fake_ssh)
 

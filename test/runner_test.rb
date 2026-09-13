@@ -6,15 +6,22 @@ class RunnerTest < Minitest::Test
     Dir.mktmpdir do |dir|
       scorer = File.join(dir, "scorer")
       FileUtils.mkdir_p(File.join(scorer, "bin"))
-      File.write(File.join(scorer, "bin", "af-score"), <<~'RUBY')
-        #!/usr/bin/env ruby
-        require "json"
-        args = ARGV
-        output = args[args.index("--output") + 1]
-        Dir.mkdir(output) unless Dir.exist?(output)
-        File.write(File.join(output, "result.json"), JSON.generate(score: 4, confidence: 90))
-        puts "ok"
-      RUBY
+      File.write(File.join(scorer, "bin", "af-score"), <<~'SH')
+        #!/bin/sh
+        set -eu
+        output=""
+        while [ "$#" -gt 0 ]; do
+          if [ "$1" = "--output" ]; then
+            output="${2:?output required}"
+            break
+          fi
+          shift
+        done
+        [ -n "$output" ] || { echo "missing --output" >&2; exit 2; }
+        mkdir -p "$output"
+        printf '{"score":4,"confidence":90}\n' > "$output/result.json"
+        printf 'ok\n'
+      SH
       FileUtils.chmod("+x", File.join(scorer, "bin", "af-score"))
 
       exp_path = File.join(dir, "exp.yml")

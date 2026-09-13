@@ -1,0 +1,23 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+$LOAD_PATH.unshift File.expand_path("../lib", __dir__)
+require "production_backlog_runner_policy"
+
+command = ARGV.shift
+case command
+when "route"
+  snapshot = ARGV.shift or abort "Usage: production-backlog-policy route SNAPSHOT.yml"
+  contract_type = ProductionBacklogRunnerPolicy.contract_type_from_snapshot(snapshot)
+  print "#{contract_type}\t#{ProductionBacklogRunnerPolicy.verifier_for(contract_type)}"
+when "max-tokens"
+  contract_type = ARGV.shift or abort "Usage: production-backlog-policy max-tokens CONTRACT_TYPE MANIFEST.yml"
+  manifest = ARGV.shift or abort "Usage: production-backlog-policy max-tokens CONTRACT_TYPE MANIFEST.yml"
+  value = ProductionBacklogRunnerPolicy.runtime_max_tokens_for_file(
+    contract_type:,
+    manifest_path: manifest
+  )
+  print value if value
+else
+  abort "Usage: production-backlog-policy (route SNAPSHOT.yml|max-tokens CONTRACT_TYPE MANIFEST.yml)"
+end

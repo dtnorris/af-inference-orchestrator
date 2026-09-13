@@ -90,7 +90,8 @@ module AdventureIngest
     def verify_manifests!(derived)
       rows = CSV.read(File.join(queue_dir, 'case_index.csv'), headers: true)
       order = File.readlines(File.join(queue_dir, 'run_order.txt'), chomp: true)
-      expected_order = batch.operations(derived).map { |adv, d| batch.manifest_relative(adv, d) }
+      operations = batch.operations(derived)
+      expected_order = operations.map { |adv, d| batch.manifest_relative(adv, d) }
       equal!('manifest order', expected_order, snapshot.fetch('manifest_order')) if snapshot.key?('manifest_order')
       equal!('run-order count/order', expected_order, order)
       equal!('case-index headers', Batch::CASE_HEADERS, rows.headers)
@@ -99,10 +100,11 @@ module AdventureIngest
       equal!('manifest file set', expected_order.map { |path| File.join(root, path) }.sort,
              Dir.glob(File.join(batch.experiment_dir, '*.yml')).sort)
       scorer_rel = Pathname.new(batch.scorer_repo).relative_path_from(Pathname.new(batch.experiment_dir)).to_s
+      adventure_indexes = derived.fetch('adventure_order').each_with_index.to_h
       pack_counts = Hash.new(0)
-      batch.operations(derived).each_with_index do |(adv, dimension), index|
+      operations.each_with_index do |(adv, dimension), index|
         row = rows[index]
-        adv_index = derived.fetch('adventure_order').index(adv.fetch('id'))
+        adv_index = adventure_indexes.fetch(adv.fetch('id'))
         pack = adv_index / snapshot.fetch('adventures_per_pack') + 1
         pack_counts[pack] += 1
         expected_row = [index + 1, pack, pack_counts[pack], adv_index + 1, *adv.values_at('id', 'title', 'source_book', 'publisher', 'page_count'),

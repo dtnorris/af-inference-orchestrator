@@ -18,6 +18,21 @@ class AdventureIngestTest < Minitest::Test
     def scorer_check!
       git_head(scorer_repo)
     end
+
+    def source_preflight(scorer_repo, catalog_path, adventure_id)
+      config = {
+        'files' => {'catalog' => File.basename(catalog_path)},
+        'source' => {
+          'allow_inward_boundary_clamp_adventure_ids' => clamp_ids,
+          'inward_boundary_clamp_max_gap_by_adventure' => clamp_gaps
+        }
+      }
+      File.open(File.join(scorer_repo, 'preflight_ids.txt'), 'a') { |f| f.puts adventure_id }
+      File.write(File.join(scorer_repo, "preflight-#{adventure_id}.yml"), YAML.dump(config))
+      return [false, 'missing canonical page marker'] if File.file?(File.join(scorer_repo, 'fail'))
+
+      [true, '']
+    end
   end
 
   def setup
@@ -295,6 +310,22 @@ class AdventureIngestTest < Minitest::Test
     assert_equal 23, calls.count { |c| c[1] == 'plan' }
     assert_equal 4, calls.count { |c| c[1] == 'worker-check' }
     assert calls.all? { |c| %w[plan worker-check].include?(c[1]) }
+  end
+
+  def test_real_source_preflight_executes_scorer_and_preserves_clamp_contract
+    batch = make_batch(clamp_ids: %w[ADV-0001 ADV-0002], clamp_gaps: {'ADV-0001' => 2})
+    real_preflight = AdventureIngest::Batch.instance_method(:source_preflight).bind(batch)
+
+    ok, detail = real_preflight.call(@scorer, File.join(@root, 'catalog.xlsx'), 'ADV-0001')
+    assert ok, detail
+    config = YAML.safe_load_file(File.join(@scorer, 'preflight-ADV-0001.yml'))
+    assert_equal %w[ADV-0001 ADV-0002], config.dig('source', 'allow_inward_boundary_clamp_adventure_ids')
+    assert_equal({'ADV-0001' => 2}, config.dig('source', 'inward_boundary_clamp_max_gap_by_adventure'))
+
+    File.write(File.join(@scorer, 'fail'), '')
+    ok, detail = real_preflight.call(@scorer, File.join(@root, 'catalog.xlsx'), 'ADV-0002')
+    refute ok
+    assert_match(/missing canonical page marker/, detail)
   end
 
   def test_legacy_snapshot_without_conditional_metadata_accepts_only_preserved_levels

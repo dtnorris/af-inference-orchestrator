@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "test_helper"
+require_relative "../lib/production_backlog_runner_policy"
 require "yaml"
 
 class SeriousnessProductionContractTest < Minitest::Test
@@ -40,11 +41,11 @@ class SeriousnessProductionContractTest < Minitest::Test
     assert_equal contract.fetch("max_tokens"), runtime.fetch("max_tokens")
   end
 
-  def test_generic_runner_routes_seriousness_contract_to_dedicated_verifier
-    script = File.read(File.join(ROOT, "run_production_backlog.sh"))
-
-    assert_includes script, "seriousness_local_qualified_v1)"
-    assert_includes script, 'VERIFY="$REPO/verify_production_backlog_seriousness.sh"'
+  def test_runner_policy_routes_seriousness_contract_to_dedicated_verifier
+    assert_equal(
+      "verify_production_backlog_seriousness.sh",
+      ProductionBacklogRunnerPolicy.verifier_for("seriousness_local_qualified_v1")
+    )
   end
 
   def test_seriousness_production_tools_are_executable
