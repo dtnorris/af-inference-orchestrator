@@ -1,0 +1,121 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "fileutils"
+require "json"
+require "optparse"
+require "rbconfig"
+require "yaml"
+
+ROOT = File.expand_path(ENV.fetch("LME_REPO", File.expand_path("..", __dir__)))
+ENV["LME_REPO"] = ROOT
+$LOAD_PATH.unshift File.join(ROOT, "lib")
+require "production_backlog_runner_policy"
+
+opts = { workers: nil, all: false, output: nil, fleet: nil }
+parser = OptionParser.new do |o|
+  o.banner = "Usage: bin/lme-production-backlog-remote QUEUE (--workers LIST|--all) --output DIR [--fleet KEY]"
+  o.on("--workers LIST", "Managed RunPod worker indices, e.g. 1-16 or 1,4,8") { |v| opts[:workers] = v }
+  o.on("--all", "Use every active worker in the selected RunPod fleet") { opts[:all] = true }
+  o.on("--output DIR", "Generic dispatch evidence directory; existing matching output resumes") { |v| opts[:output] = v }
+  o.on("--fleet KEY", "Managed RunPod fleet key") { |v| opts[:fleet] = v }
+end
+
+begin
+  parser.parse!(ARGV)
+  queue_arg = ARGV.shift
+  raise OptionParser::MissingArgument, "QUEUE" unless queue_arg
+  raise OptionParser::InvalidArgument, "unexpected arguments: #{ARGV.join(' ')}" unless ARGV.empty?
+  raise OptionParser::MissingArgument, "--output" unless opts[:output]
+  raise OptionParser::InvalidArgument, "use either --workers or --all, not both" if opts[:workers] && opts[:all]
+  raise OptionParser::InvalidArgument, "use --workers LIST or --all" unless opts[:workers] || opts[:all]
+rescue OptionParser::ParseError => e
+  warn "ERROR: #{e.message}"
+  warn parser
+  exit 2
+end
+
+queue_dir = File.expand_path(queue_arg, ROOT)
+order_path = File.join(queue_dir, "run_order.txt")
+snapshot_path = File.join(queue_dir, "snapshot.yml")
+abort "ERROR: missing #{order_path}" unless File.file?(order_path)
+abort "ERROR: missing #{snapshot_path}" unless File.file?(snapshot_path)
+
+contract_type = ProductionBacklogRunnerPolicy.contract_type_from_snapshot(snapshot_path)
+verifier_rel = ProductionBacklogRunnerPolicy.verifier_for(contract_type)
+verifier = File.join(ROOT, verifier_rel)
+source_preflight = File.join(ROOT, "bin", "preflight-production-backlog-sources")
+abort "ERROR: missing/executable verifier #{verifier}" unless File.executable?(verifier)
+abort "ERROR: missing/executable runtime source preflight #{source_preflight}" unless File.executable?(source_preflight)
+
+unless system({ "LME_REPO" => ROOT }, verifier, queue_arg, chdir: ROOT)
+  abort "ERROR: backlog preflight failed. No remote inference launched."
+end
+unless system({ "LME_REPO" => ROOT }, source_preflight, queue_arg, chdir: ROOT)
+  abort "ERROR: runtime source preflight failed. No remote inference launched."
+end
+
+manifests = File.readlines(order_path, chomp: true).reject { |line| line.strip.empty? }
+abort "ERROR: frozen queue is empty: #{order_path}" if manifests.empty?
+
+jobs = manifests.each_with_index.map do |manifest_arg, index|
+  manifest_path = File.expand_path(manifest_arg, ROOT)
+  abort "ERROR: missing frozen manifest #{manifest_path}" unless File.file?(manifest_path)
+  manifest = YAML.safe_load_file(manifest_path, aliases: true) || {}
+  unless Array(manifest["workers"]).map(&:to_s) == ["mac"]
+    abort "ERROR: remote production bridge requires workers: [mac]: #{manifest_arg}"
+  end
+
+  runtime_max_tokens = ProductionBacklogRunnerPolicy.runtime_max_tokens_for(
+    contract_type:,
+    manifest:
+  )
+  env = {}
+  env["LME_RUNTIME_MAX_TOKENS"] = runtime_max_tokens.to_s if runtime_max_tokens
+  {
+    "job_id" => format("production-%04d", index + 1),
+    "argv" => ["bin/lme-production-remote-job", manifest_arg],
+    "env" => env
+  }
+end
+
+output_dir = File.expand_path(opts.fetch(:output), ROOT)
+jobs_path = "#{output_dir}.jobs.json"
+FileUtils.mkdir_p(File.dirname(jobs_path))
+jobs_content = JSON.pretty_generate("jobs" => jobs) + "\n"
+if File.file?(jobs_path) && File.read(jobs_path) != jobs_content
+  abort "ERROR: existing remote campaign jobs differ: #{jobs_path}; use a new --output path"
+end
+unless File.file?(jobs_path)
+  tmp = "#{jobs_path}.tmp.#{$$}"
+  begin
+    File.write(tmp, jobs_content)
+    File.rename(tmp, jobs_path)
+  ensure
+    File.delete(tmp) if File.exist?(tmp)
+  end
+end
+
+ENV["AF_SOCIAL_INTERACTION_GUARDRAIL_PROFILE"] = "phase6-v0.3"
+ENV["AF_INVESTIGATION_GUARDRAIL_PROFILE"] = "phase6-v0.4"
+
+dispatch = [
+  RbConfig.ruby,
+  File.join(ROOT, "bin", "lme-runpod-dispatch"),
+  "--jobs", jobs_path,
+  "--output", output_dir
+]
+if opts[:all]
+  dispatch << "--all"
+else
+  dispatch.concat(["--workers", opts.fetch(:workers)])
+end
+dispatch.concat(["--fleet", opts[:fleet]]) if opts[:fleet]
+
+puts "Remote production campaign"
+puts "  Queue: #{queue_arg}"
+puts "  Frozen manifests: #{jobs.length}"
+puts "  Dispatch evidence: #{output_dir}"
+puts "  Job ledger: #{jobs_path}"
+puts "  Frozen manifests are read-only; remote routing is execution-time only."
+exec(*dispatch, chdir: ROOT)

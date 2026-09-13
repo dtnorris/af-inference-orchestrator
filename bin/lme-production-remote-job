@@ -1,0 +1,93 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "rbconfig"
+require "tempfile"
+require "uri"
+require "yaml"
+
+ROOT = File.expand_path(ENV.fetch("LME_REPO", File.expand_path("..", __dir__)))
+ENV["LME_REPO"] = ROOT
+$LOAD_PATH.unshift File.join(ROOT, "lib")
+require "production_backlog_runner_policy"
+
+manifest_arg = ARGV.shift or abort "Usage: lme-production-remote-job MANIFEST.yml"
+abort "Usage: lme-production-remote-job MANIFEST.yml" unless ARGV.empty?
+manifest_path = File.expand_path(manifest_arg, ROOT)
+abort "ERROR: manifest not found: #{manifest_path}" unless File.file?(manifest_path)
+
+endpoint = ENV.fetch("LME_OLLAMA_URL", "").strip
+abort "ERROR: LME_OLLAMA_URL is required" if endpoint.empty?
+begin
+  uri = URI.parse(endpoint)
+rescue URI::InvalidURIError => e
+  abort "ERROR: invalid LME_OLLAMA_URL: #{e.message}"
+end
+unless uri.scheme == "http" && %w[127.0.0.1 localhost ::1].include?(uri.host) && uri.port
+  abort "ERROR: LME_OLLAMA_URL must be a loopback HTTP tunnel endpoint"
+end
+
+manifest = YAML.safe_load_file(manifest_path, aliases: true) || {}
+unless Array(manifest["workers"]).map(&:to_s) == ["mac"]
+  abort "ERROR: remote production bridge only accepts frozen manifests with workers: [mac]"
+end
+
+output_root = File.join(ROOT, "output")
+prior_status = ProductionBacklogRunnerPolicy.manifest_status(manifest:, output_root:)
+case prior_status
+when "complete"
+  puts "Remote production job already complete: #{manifest_arg}"
+  exit 0
+when "failed"
+  warn "ERROR: remote production job is already sticky-failed; refusing favorable rerun: #{manifest_arg}"
+  exit 2
+when "running"
+  warn "ERROR: remote production job is recorded as running; refusing duplicate execution: #{manifest_arg}"
+  exit 2
+end
+
+workers_path = File.join(ROOT, "config", "workers.yml")
+abort "ERROR: missing #{workers_path}" unless File.file?(workers_path)
+workers_document = YAML.safe_load_file(workers_path, aliases: true) || {}
+workers = workers_document.fetch("workers")
+mac = workers.fetch("mac")
+mac = Marshal.load(Marshal.dump(mac))
+mac["base_url"] = endpoint
+mac["scorer_env"] = (mac["scorer_env"] || {}).dup
+mac["scorer_env"]["AF_OLLAMA_BASE_URL"] = endpoint
+workers_document = Marshal.load(Marshal.dump(workers_document))
+workers_document["workers"] = workers.merge("mac" => mac)
+
+runtime_max_tokens = ENV.delete("LME_RUNTIME_MAX_TOKENS").to_s.strip
+ENV.delete("AF_LLM_MAX_TOKENS")
+ENV["AF_LLM_MAX_TOKENS"] = runtime_max_tokens unless runtime_max_tokens.empty?
+
+exit_status = 1
+Tempfile.create(["lme-production-remote-workers-", ".yml"]) do |file|
+  file.chmod(0o600)
+  file.write(YAML.dump(workers_document))
+  file.flush
+
+  child_env = { "LME_WORKERS_CONFIG" => file.path }
+  ok = system(
+    child_env,
+    RbConfig.ruby,
+    File.join(ROOT, "bin", "lme"),
+    "run",
+    manifest_arg,
+    chdir: ROOT
+  )
+  child_status = $?
+  exit_status = ok ? 0 : (child_status&.exitstatus || 1)
+end
+
+final_status = ProductionBacklogRunnerPolicy.manifest_status_for_file(
+  manifest_path:,
+  output_root:
+)
+if exit_status.zero? && final_status == "complete"
+  exit 0
+end
+
+warn "ERROR: remote production job did not complete cleanly: #{manifest_arg} status=#{final_status} exit=#{exit_status}"
+exit(exit_status.zero? ? 1 : exit_status)

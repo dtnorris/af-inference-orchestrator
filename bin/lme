@@ -49,7 +49,9 @@ end
 
 def load_workers(require_runpod: false)
   apply_selected_runpod_routing!(require_active: require_runpod)
-  path = File.join(ROOT, "config", "workers.yml")
+  path = ENV["LME_WORKERS_CONFIG"].to_s.strip
+  path = File.join(ROOT, "config", "workers.yml") if path.empty?
+  path = File.expand_path(path)
   abort "Missing #{path}; copy config/workers.example.yml first." unless File.file?(path)
   data = LocalModelEvaluation::Config.load_yaml(path)
   (data.fetch("workers")).to_h { |name, attrs| [name.to_s, LocalModelEvaluation::Worker.new(name, attrs)] }
