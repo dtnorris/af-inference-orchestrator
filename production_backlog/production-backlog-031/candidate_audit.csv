@@ -1,0 +1,25 @@
+adventure_id,adventure_title,source_book,publisher,page_count,level_start,level_end,levels_action,decision,reason
+ADV-0783,The Rat Catchers,Zakhara: Adventures in the Land of Fate,Miniature Giant Space Hamster Press,17,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0784,The Flame's Tip,Zakhara: Adventures in the Land of Fate,Miniature Giant Space Hamster Press,9,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0785,Deep Green,Weird Wastelands,Web DM Entertainment,19,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0786,The Heist,Weird Wastelands,Web DM Entertainment,1,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0787,Basalt Palace,Weird Wastelands,Web DM Entertainment,21,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0788,The Winter-horn,Keepers of the Elven-Rings,Free League Publishing,7,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0789,The Old Dwarf-mines,Ruins of Eriador,Free League Publishing,6,5,6,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0790,The White Towers,Ruins of Eriador,Free League Publishing,6,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0791,The Tree of Sorrow,Ruins of Eriador,Free League Publishing,6,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0792,The Shrouded Islets,Ruins of Eriador,Free League Publishing,4,5,6,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0793,Tindailin — an Elven Refuge,Ruins of Eriador,Free League Publishing,6,2,3,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0794,The Fields of Slaughter,Ruins of Eriador,Free League Publishing,5,5,6,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0795,The Hill of the Sleeper,Ruins of Eriador,Free League Publishing,7,4,5,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0796,Mount Gram,Ruins of Eriador,Free League Publishing,8,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0797,Fort Arlas,Ruins of Eriador,Free League Publishing,5,5,6,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0798,The Fate of Eagles,Moria: Shadow of Khazad-dûm,Free League Publishing,5,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0799,The Vault of Uruktharbun,Moria: Shadow of Khazad-dûm,Free League Publishing,4,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0800,The Lost Citadel of the Ring-smiths,Moria: Shadow of Khazad-dûm,Free League Publishing,6,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0801,The Armouries of the Third Deep,Moria: Shadow of Khazad-dûm,Free League Publishing,3,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0802,Escaping the Ledge of Woe,Moria: Shadow of Khazad-dûm,Free League Publishing,3,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0803,Relief from Slavery,Moria: Shadow of Khazad-dûm,Free League Publishing,5,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0804,Defeating Durin's Bane,Moria: Shadow of Khazad-dûm,Free League Publishing,3,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0805,Balin's Expedition,Moria: Shadow of Khazad-dûm,Free League Publishing,4,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0806,A Prisoner of the Goblins,Moria: Shadow of Khazad-dûm,Free League Publishing,3,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
