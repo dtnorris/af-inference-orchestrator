@@ -1,0 +1,27 @@
+adventure_id,adventure_title,source_book,publisher,page_count,level_start,level_end,levels_action,decision,reason
+ADV-0807,Damsel in Disgrace,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,5,5,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0808,Elementary My Dear Adventurer,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,5,5,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0809,Rats in the Halls,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,3,3,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0810,The Moving Castle,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,7,7,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0811,Where Is Professor Button?,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,6,6,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0812,Lord Laverion's Legacy,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,5,5,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0813,The Lair of the Whisperers,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,4,4,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0814,The Magician's Mind Palace,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,3,3,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0815,The Old Druid's Cairn,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,10,10,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0816,The Prison of the Cursed King,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,9,9,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0818,The Broken Ethereal Tree,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,5,5,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0819,"Eratos, Elemental Plane of Earth",Micro Dungeons Annual Compendium 2024,ND Hobbies,1,5,5,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0820,"Aquatar, the Elemental Plane of Water",Micro Dungeons Annual Compendium 2024,ND Hobbies,1,6,6,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0821,"Flogysto, Elemental Plane of Fire",Micro Dungeons Annual Compendium 2024,ND Hobbies,1,6,6,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0822,"Windara, the Elemental Plane of Air",Micro Dungeons Annual Compendium 2024,ND Hobbies,1,6,6,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0823,Hunt the Hell Hog,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,4,4,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0824,Rock in the Rock Tunnel,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,10,10,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0825,Run from the Ruins,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,7,7,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0826,Save the Queen,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,5,5,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0827,The Tomb of Sir Deckard & The Holy Widow,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,4,4,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0828,Alone in the Mansion,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,5,5,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0829,"Ice, Ice, Baby",Micro Dungeons Annual Compendium 2024,ND Hobbies,1,8,8,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0830,Perpetual Winter,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,5,5,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0831,The Lights on the Tree,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,9,9,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0832,The Promised Gift,Micro Dungeons Annual Compendium 2024,ND Hobbies,1,3,3,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0817,Micro Dungeons: The Inner Planes,Micro Dungeons Annual Compendium 2024,ND Hobbies,6,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
