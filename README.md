@@ -250,6 +250,15 @@ workload failure does not stop other independent jobs. A fleet or tunnel failure
 stops new assignments and leaves already-completed evidence intact.
 Environment values are not persisted; pass secrets through `env`, never `argv`.
 
+Large queues fail closed on dispatcher-accounting anomalies: duplicate or unknown
+result identities and nonterminal result states produce an `integrity_failed`
+summary instead of being allowed to distort completion counts. Unexpected worker
+loop crashes quarantine that logical worker while preserving the remaining queue
+for surviving workers or a deterministic resume. `INT`/`TERM` stop new claims,
+terminate active workload process groups, persist an interrupted summary, and
+leave possibly-started jobs terminal rather than silently retrying them. The test
+suite includes a 900-job / 16-worker exactly-once regression with no paid inference.
+
 ## Define an experiment
 
 See `experiments/templates/model-viability.yml` for the general manifest shape and `experiments/templates/remote-parallel.yml` for a remote throughput campaign.

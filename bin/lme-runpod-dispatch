@@ -21,6 +21,16 @@ opts = {
   fleet: ENV.fetch("LME_RUNPOD_FLEET", LocalModelEvaluation::RunpodFleetNamespace::DEFAULT_KEY)
 }
 
+interrupted_signal = nil
+%w[INT TERM].each do |signal|
+  Signal.trap(signal) do
+    next if interrupted_signal
+
+    interrupted_signal = signal
+    Thread.main.raise(Interrupt, "received #{signal}")
+  end
+end
+
 parser = OptionParser.new do |o|
   o.banner = "Usage: bin/lme runpod-dispatch --jobs FILE (--workers LIST|--all) --output DIR [--group-by-affinity] [--fleet KEY]"
   o.on("--jobs FILE", "JSON jobs with job_id, argv, optional env, and optional affinity") { |v| opts[:jobs] = v }
@@ -87,6 +97,11 @@ begin
        "#{summary.fetch('failed_count')} failed, #{summary.fetch('not_started_count')} not started."
   puts "Evidence: #{dispatcher.output_dir}"
   exit(summary.fetch("status") == "completed" ? 0 : summary.fetch("status") == "workload_failed" ? 2 : 1)
+rescue Interrupt => e
+  signal = interrupted_signal || "INT"
+  warn "ERROR: dispatch interrupted by #{signal}: #{e.message}"
+  warn "Active workload process groups were terminated; unstarted jobs remain resumable."
+  exit(128 + Signal.list.fetch(signal, 2))
 rescue JSON::ParserError => e
   warn "ERROR: jobs file is invalid JSON: #{e.message}"
   exit 2

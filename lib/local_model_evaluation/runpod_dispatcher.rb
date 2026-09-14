@@ -18,7 +18,17 @@ module LocalModelEvaluation
     class InfrastructureError < Error; end
 
     class SystemCommandRunner
+      TERMINATION_GRACE_SECONDS = 1.0
+      TERMINATION_POLL_SECONDS = 0.05
+
+      def initialize
+        @active_mutex = Mutex.new
+        @active_process_groups = {}
+      end
+
       def run(argv:, env:, stdout_path:, stderr_path:, chdir:)
+        pid = nil
+        status = nil
         File.open(stdout_path, "w") do |stdout|
           File.open(stderr_path, "w") do |stderr|
             pid = Process.spawn(
@@ -30,10 +40,60 @@ module LocalModelEvaluation
               err: stderr,
               pgroup: true
             )
+            register_process_group(pid)
             _pid, status = Process.wait2(pid)
-            return status.exitstatus
+            return status.exitstatus || 128 + status.termsig.to_i
           end
         end
+      ensure
+        terminate_process_groups([pid]) if pid && status.nil?
+        unregister_process_group(pid) if pid
+      end
+
+      def cancel_all
+        pids = @active_mutex.synchronize { @active_process_groups.keys.dup }
+        terminate_process_groups(pids)
+      end
+
+      private
+
+      def register_process_group(pid)
+        @active_mutex.synchronize { @active_process_groups[pid] = true }
+      end
+
+      def unregister_process_group(pid)
+        @active_mutex.synchronize { @active_process_groups.delete(pid) }
+      end
+
+      def terminate_process_groups(pids)
+        pids = Array(pids).compact.uniq
+        return if pids.empty?
+
+        pids.each { |pid| signal_group("TERM", pid) }
+        deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + TERMINATION_GRACE_SECONDS
+        loop do
+          remaining = pids.select { |pid| process_group_alive?(pid) }
+          return if remaining.empty?
+          break if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+
+          sleep TERMINATION_POLL_SECONDS
+        end
+        pids.select { |pid| process_group_alive?(pid) }.each { |pid| signal_group("KILL", pid) }
+      end
+
+      def signal_group(signal, pid)
+        Process.kill(signal, -pid)
+      rescue Errno::ESRCH
+        nil
+      end
+
+      def process_group_alive?(pid)
+        Process.kill(0, -pid)
+        true
+      rescue Errno::ESRCH
+        false
+      rescue Errno::EPERM
+        true
       end
     end
 
@@ -56,6 +116,7 @@ module LocalModelEvaluation
     attr_reader :output_dir
 
     def run(jobs:, worker_indices:, group_by_affinity: false)
+      reset_run_state!
       jobs = normalize_jobs(jobs)
       raise Error, "at least one job is required" if jobs.empty?
 
@@ -66,10 +127,41 @@ module LocalModelEvaluation
 
       queue = Queue.new
       ordered_jobs(pending_jobs, group_by_affinity:).each { |job| queue << job }
-      threads = workers.map do |worker|
-        Thread.new { worker_loop(queue, fleet.fetch("fleet_id"), worker) }
+      threads = []
+      begin
+        workers.each do |worker|
+          threads << Thread.new do
+            begin
+              worker_loop(queue, fleet.fetch("fleet_id"), worker)
+            rescue StandardError => e
+              record_infrastructure_failure(
+                worker,
+                InfrastructureError.new("dispatcher worker loop crashed: #{e.class}: #{e.message}")
+              )
+            end
+          end
+        end
+        threads.each(&:join)
+      rescue Interrupt
+        request_stop!
+        @command_runner.cancel_all if @command_runner.respond_to?(:cancel_all)
+        threads.each do |thread|
+          thread.join
+        rescue StandardError
+          nil
+        end
+
+        summary = build_summary(
+          fleet_id: fleet.fetch("fleet_id"),
+          jobs:,
+          workers:,
+          started_at:
+        )
+        summary["status"] = "interrupted"
+        summary["interrupted"] = true
+        write_json(File.join(output_dir, "summary.json"), summary)
+        raise
       end
-      threads.each(&:join)
 
       summary = build_summary(
         fleet_id: fleet.fetch("fleet_id"),
@@ -84,6 +176,22 @@ module LocalModelEvaluation
     end
 
     private
+
+    def reset_run_state!
+      @state_mutex.synchronize do
+        @results.clear
+        @infrastructure_failures.clear
+        @stop_requested = false
+      end
+    end
+
+    def request_stop!
+      @state_mutex.synchronize { @stop_requested = true }
+    end
+
+    def stop_requested?
+      @state_mutex.synchronize { @stop_requested == true }
+    end
 
     def normalize_jobs(values)
       jobs = Array(values).map do |value|
@@ -176,6 +284,8 @@ module LocalModelEvaluation
 
     def worker_loop(queue, fleet_id, planned_worker)
       loop do
+        break if stop_requested?
+
         begin
           worker = ready_worker!(fleet_id, planned_worker)
         rescue InfrastructureError => e
@@ -183,8 +293,11 @@ module LocalModelEvaluation
           break
         end
 
+        break if stop_requested?
         job = next_job(queue)
         break unless job
+
+        break if stop_requested?
 
         execute(job, worker)
       end
@@ -384,6 +497,51 @@ module LocalModelEvaluation
         raise Error, "metadata job_id mismatch for #{job.fetch('job_id')}"
       end
       raise Error, "metadata for #{job.fetch('job_id')} is missing status" unless metadata.key?("status")
+
+      return unless metadata.fetch("status") == "completed"
+
+      required = %w[
+        worker_index worker_url argv env_keys started_at_utc finished_at_utc
+        elapsed_seconds exit_status stdout_path stderr_path
+      ]
+      missing = required.reject { |key| metadata.key?(key) }
+      unless missing.empty?
+        raise Error,
+              "completed metadata for #{job.fetch('job_id')} is missing durable evidence: #{missing.join(', ')}"
+      end
+
+      unless metadata.fetch("argv") == job.fetch("argv")
+        raise Error, "completed metadata argv mismatch for #{job.fetch('job_id')}"
+      end
+      unless metadata.fetch("env_keys") == job.fetch("env").keys.sort
+        raise Error, "completed metadata env_keys mismatch for #{job.fetch('job_id')}"
+      end
+      unless metadata.fetch("exit_status") == 0
+        raise Error, "completed metadata for #{job.fetch('job_id')} must have exit_status 0"
+      end
+      elapsed = metadata.fetch("elapsed_seconds")
+      unless elapsed.is_a?(Numeric) && elapsed >= 0
+        raise Error, "completed metadata for #{job.fetch('job_id')} has invalid elapsed_seconds"
+      end
+      %w[started_at_utc finished_at_utc].each do |key|
+        begin
+          Time.iso8601(metadata.fetch(key).to_s)
+        rescue ArgumentError
+          raise Error, "completed metadata for #{job.fetch('job_id')} has invalid #{key}"
+        end
+      end
+      begin
+        RunpodWorkers.validate_index(metadata.fetch("worker_index"))
+        validate_endpoint!(metadata.fetch("worker_url"))
+      rescue RunpodWorkers::Error, InfrastructureError => e
+        raise Error, "completed metadata for #{job.fetch('job_id')} has invalid worker evidence: #{e.message}"
+      end
+      %w[stdout_path stderr_path].each do |key|
+        value = metadata.fetch(key)
+        unless value.is_a?(String) && !value.empty?
+          raise Error, "completed metadata for #{job.fetch('job_id')} has invalid #{key}"
+        end
+      end
     end
 
     def read_json!(path, label:)
@@ -423,26 +581,52 @@ module LocalModelEvaluation
       finished_at = utc_now
       results = @state_mutex.synchronize { @results.sort_by { |result| result.fetch("job_id") } }
       infrastructure_failures = @state_mutex.synchronize { @infrastructure_failures.dup }
-      completed_ids = results.map { |result| result.fetch("job_id") }
-      not_started_count = jobs.length - results.length
-      {
+      planned_ids = jobs.map { |job| job.fetch("job_id") }
+      planned_lookup = planned_ids.to_h { |job_id| [job_id, true] }
+      result_counts = results.map { |result| result.fetch("job_id") }.tally
+      duplicate_ids = result_counts.select { |_job_id, count| count > 1 }.keys.sort
+      unknown_ids = result_counts.keys.reject { |job_id| planned_lookup.key?(job_id) }.sort
+      invalid_status_ids = results.filter_map do |result|
+        result.fetch("job_id") unless %w[completed failed].include?(result["status"])
+      end.uniq.sort
+
+      integrity_errors = []
+      unless duplicate_ids.empty?
+        integrity_errors << "duplicate result job_id(s): #{duplicate_ids.join(', ')}"
+      end
+      unless unknown_ids.empty?
+        integrity_errors << "unknown result job_id(s): #{unknown_ids.join(', ')}"
+      end
+      unless invalid_status_ids.empty?
+        integrity_errors << "nonterminal result job_id(s): #{invalid_status_ids.join(', ')}"
+      end
+
+      countable_results = results.select do |result|
+        job_id = result.fetch("job_id")
+        planned_lookup.key?(job_id) && result_counts.fetch(job_id) == 1
+      end
+      observed_ids = result_counts.keys.select { |job_id| planned_lookup.key?(job_id) }
+      not_started_job_ids = planned_ids - observed_ids
+      summary = {
         "schema_version" => SCHEMA_VERSION,
         "fleet_id" => fleet_id,
         "started_at_utc" => started_at.iso8601,
         "finished_at_utc" => finished_at.iso8601,
-        "status" => if not_started_count.positive?
+        "status" => if integrity_errors.any?
+                      "integrity_failed"
+                    elsif not_started_job_ids.any?
                       "infrastructure_failed"
-                    elsif results.any? { |result| result["status"] == "failed" }
+                    elsif countable_results.any? { |result| result["status"] == "failed" }
                       "workload_failed"
                     else
                       "completed"
                     end,
         "worker_count" => workers.length,
         "job_count" => jobs.length,
-        "completed_count" => results.count { |result| result["status"] == "completed" },
-        "failed_count" => results.count { |result| result["status"] == "failed" },
-        "not_started_count" => not_started_count,
-        "not_started_job_ids" => jobs.map { |job| job.fetch("job_id") } - completed_ids,
+        "completed_count" => countable_results.count { |result| result["status"] == "completed" },
+        "failed_count" => countable_results.count { |result| result["status"] == "failed" },
+        "not_started_count" => not_started_job_ids.length,
+        "not_started_job_ids" => not_started_job_ids,
         "infrastructure_failures" => infrastructure_failures,
         "jobs" => results.map do |result|
           result.slice(
@@ -451,6 +635,8 @@ module LocalModelEvaluation
           )
         end
       }
+      summary["integrity_errors"] = integrity_errors unless integrity_errors.empty?
+      summary
     end
 
     def validate_endpoint!(value)
