@@ -1,0 +1,86 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "fileutils"
+require "json"
+require "net/http"
+require "uri"
+
+query_id, repeat = ARGV
+abort "Usage: bin/lme-matcher-remote-job QUERY_ID REPEAT" unless query_id && repeat && ARGV.length == 2
+
+matcher_repo = File.expand_path(ENV.fetch("AF_MATCHER_REPO_PATH"))
+matcher = File.join(matcher_repo, "bin", "af-matcher")
+abort "ERROR: matcher executable unavailable: #{matcher}" unless File.executable?(matcher)
+
+ollama_url = ENV.fetch("LME_OLLAMA_URL")
+model = ENV.fetch("AF_MATCHER_MODEL")
+context = Integer(ENV.fetch("AF_MATCHER_NUM_CTX"))
+output_root = File.expand_path(ENV.fetch("AF_MATCHER_OUTPUT_ROOT"))
+FileUtils.mkdir_p(output_root)
+
+child_env = {
+  "OLLAMA_BASE_URL" => ollama_url,
+  "AF_MATCHER_MODEL" => model,
+  "AF_MATCHER_REPEATS" => ENV.fetch("AF_MATCHER_REPEATS", "2"),
+  "AF_MATCHER_NUM_CTX" => context.to_s,
+  "AF_MATCHER_TEMPERATURE" => ENV.fetch("AF_MATCHER_TEMPERATURE", ""),
+  "AF_MATCHER_SEED" => ENV.fetch("AF_MATCHER_SEED", ""),
+  "AF_MATCHER_OUTPUT_ROOT" => output_root
+}
+ok = system(child_env, matcher, "run-case", query_id, repeat, chdir: matcher_repo)
+exit 1 unless ok
+
+exit 0 unless ENV["LME_MATCHER_VERIFY_RESIDENCY"] == "true"
+
+uri = URI.join("#{ollama_url.sub(%r{/+\z}, '')}/", "api/ps")
+response = Net::HTTP.start(uri.host, uri.port, open_timeout: 5, read_timeout: 30) do |http|
+  http.request(Net::HTTP::Get.new(uri))
+end
+raise "Ollama /api/ps returned HTTP #{response.code}" unless response.is_a?(Net::HTTPSuccess)
+
+ps_path = File.expand_path(ENV.fetch("LME_MATCHER_PS_OUTPUT"))
+summary_path = File.expand_path(ENV.fetch("LME_MATCHER_QUALIFICATION_SUMMARY"))
+FileUtils.mkdir_p(File.dirname(ps_path))
+File.write(ps_path, response.body)
+
+ps = JSON.parse(response.body)
+row = Array(ps["models"]).find do |candidate|
+  [candidate["name"], candidate["model"]].compact.any? do |name|
+    name == model || name.sub(/:latest\z/, "") == model.sub(/:latest\z/, "")
+  end
+end
+raise "model #{model} missing from /api/ps after request" unless row
+
+size = Integer(row.fetch("size"))
+size_vram = Integer(row.fetch("size_vram"))
+actual_context = Integer(row.fetch("context_length"))
+raise "post-request model not fully GPU-resident: size=#{size} size_vram=#{size_vram}" unless size == size_vram
+raise "post-request context mismatch: expected #{context}, got #{actual_context}" unless actual_context == context
+
+manifest_path = Dir.glob(File.join(output_root, "**", "manifest.json")).sort.first
+raise "matcher manifest not found beneath #{output_root}" unless manifest_path
+manifest = JSON.parse(File.read(manifest_path))
+request = manifest.fetch("requests").fetch(0)
+seconds = Float(request.fetch("seconds"))
+eval_count = Integer(request.fetch("eval_count"))
+eval_duration_ns = request["eval_duration_ns"]
+generation_seconds = eval_duration_ns && Float(eval_duration_ns) / 1_000_000_000.0
+tokens_per_second = generation_seconds && generation_seconds.positive? ? eval_count / generation_seconds : nil
+
+lines = [
+  "qualification=PASS",
+  "gpu_id=#{ENV.fetch('RUNPOD_GPU_ID')}",
+  "gpu_memory_min_gb=#{ENV.fetch('RUNPOD_GPU_MEMORY_GB')}",
+  "model=#{model}",
+  "context_length=#{actual_context}",
+  "size_bytes=#{size}",
+  "size_vram_bytes=#{size_vram}",
+  "full_gpu_residency=true",
+  "request_seconds=#{format('%.3f', seconds)}",
+  "eval_count=#{eval_count}"
+]
+lines << "generation_seconds=#{format('%.3f', generation_seconds)}" if generation_seconds
+lines << "generation_tokens_per_second=#{format('%.2f', tokens_per_second)}" if tokens_per_second
+File.write(summary_path, lines.join("\n") + "\n")
+puts File.read(summary_path)

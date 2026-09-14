@@ -1,0 +1,144 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "fileutils"
+require "json"
+require "optparse"
+
+ROOT = File.expand_path(ENV.fetch("LME_REPO", File.expand_path("..", __dir__)))
+ENV["LME_REPO"] = ROOT
+$LOAD_PATH.unshift File.join(ROOT, "lib")
+require "local_model_evaluation/rpof_client"
+
+opts = {
+  workers: nil,
+  all: false,
+  fleet: ENV.fetch("LME_RUNPOD_FLEET", "default"),
+  models: [],
+  expected_digests: {},
+  context: nil,
+  gpu: nil,
+  jobs: nil,
+  workdir: nil,
+  output: nil,
+  capability_output: nil,
+  group_by_affinity: false
+}
+parser = OptionParser.new do |o|
+  o.banner = "Usage: bin/lme-rpof-campaign --jobs FILE --workdir DIR --output DIR (--workers LIST|--all) --model NAME --context N [options]"
+  o.on("--workers LIST", "Logical worker indices, e.g. 1-8 or 1,4,8") { |v| opts[:workers] = v }
+  o.on("--all", "Use every active worker in the logical fleet") { opts[:all] = true }
+  o.on("--fleet KEY", "Logical RPOF fleet key") { |v| opts[:fleet] = v }
+  o.on("--model NAME", "Required Ollama model; repeat for multiple models") { |v| opts[:models] << v }
+  o.on("--expect-digest MODEL=SHA256", "Require an exact model digest") do |v|
+    name, digest = v.split("=", 2)
+    raise OptionParser::InvalidArgument, "--expect-digest must be MODEL=SHA256" if name.to_s.empty? || !digest.to_s.match?(/\A[0-9a-fA-F]{64}\z/)
+    opts[:expected_digests][name] = digest.downcase
+  end
+  o.on("--context N", Integer, "Required Ollama context length") { |v| opts[:context] = v }
+  o.on("--gpu ID", "Optional exact required GPU id") { |v| opts[:gpu] = v }
+  o.on("--jobs FILE", "JSON document containing a jobs array") { |v| opts[:jobs] = v }
+  o.on("--workdir DIR", "Opaque RPOF workload working directory") { |v| opts[:workdir] = v }
+  o.on("--output DIR", "RPOF generic dispatch evidence directory") { |v| opts[:output] = v }
+  o.on("--capability-output FILE", "Persist the generic capability result") { |v| opts[:capability_output] = v }
+  o.on("--group-by-affinity", "Request stable generic affinity grouping") { opts[:group_by_affinity] = true }
+end
+
+begin
+  parser.parse!(ARGV)
+  raise OptionParser::InvalidArgument, "unexpected arguments: #{ARGV.join(' ')}" unless ARGV.empty?
+  raise OptionParser::InvalidArgument, "use either --workers or --all, not both" if opts[:workers] && opts[:all]
+  raise OptionParser::InvalidArgument, "use --workers LIST or --all" unless opts[:workers] || opts[:all]
+  %i[context jobs workdir output].each do |key|
+    raise OptionParser::MissingArgument, "--#{key.to_s.tr('_', '-')}" if opts[key].nil?
+  end
+  raise OptionParser::InvalidArgument, "--context must be positive" unless opts[:context].positive?
+  raise OptionParser::MissingArgument, "--model" if opts[:models].empty?
+  unknown_digests = opts[:expected_digests].keys - opts[:models]
+  raise OptionParser::InvalidArgument, "digest supplied for unrequested model(s): #{unknown_digests.join(', ')}" unless unknown_digests.empty?
+rescue OptionParser::ParseError => e
+  warn "ERROR: #{e.message}"
+  warn parser
+  exit 2
+end
+
+def write_atomic(path, content)
+  expanded = File.expand_path(path)
+  FileUtils.mkdir_p(File.dirname(expanded))
+  tmp = "#{expanded}.tmp.#{$$}"
+  File.write(tmp, content)
+  File.rename(tmp, expanded)
+ensure
+  File.delete(tmp) if defined?(tmp) && tmp && File.exist?(tmp)
+end
+
+begin
+  jobs_document = JSON.parse(File.read(File.expand_path(opts.fetch(:jobs))))
+  jobs = jobs_document.fetch("jobs")
+  raise ArgumentError, "jobs must be a non-empty array" unless jobs.is_a?(Array) && !jobs.empty?
+
+  selector = if opts[:all]
+               { "mode" => "all" }
+             else
+               {
+                 "mode" => "indices",
+                 "indices" => LocalModelEvaluation::RpofClient.expand_worker_selector(opts.fetch(:workers))
+               }
+             end
+  models = opts[:models].uniq.map do |name|
+    row = { "name" => name }
+    row["expected_digest"] = opts[:expected_digests][name] if opts[:expected_digests].key?(name)
+    row
+  end
+  requirements = {
+    "models" => models,
+    "required_context_length" => opts.fetch(:context),
+    "require_fully_gpu_resident" => true
+  }
+  requirements["required_gpu_id"] = opts[:gpu] if opts[:gpu]
+
+  client = LocalModelEvaluation::RpofClient.new(repo_root: ROOT)
+  capability = client.capability_check(
+    "contract_version" => "afio-rpof-capability-check-request/v0.1",
+    "fleet_key" => opts.fetch(:fleet),
+    "worker_selector" => selector,
+    "requirements" => requirements
+  )
+  capability_path = opts[:capability_output] || "#{File.expand_path(opts.fetch(:output))}.capability.json"
+  write_atomic(capability_path, JSON.pretty_generate(capability) + "\n")
+
+  unless capability.fetch("ready")
+    failures = capability.fetch("diagnostics").select { |row| row["status"] == "FAIL" }
+    warn "ERROR: RPOF capability check failed: #{failures.map { |row| "#{row['code']}: #{row['detail']}" }.join('; ')}"
+    exit 1
+  end
+
+  dispatch_request = {
+    "contract_version" => "afio-rpof-dispatch-request/v0.1",
+    "target" => {
+      "fleet_key" => opts.fetch(:fleet),
+      "expected_fleet_id" => capability.fetch("fleet_id"),
+      "worker_indices" => capability.fetch("selected_worker_indices")
+    },
+    "group_by_affinity" => opts.fetch(:group_by_affinity),
+    "jobs" => jobs
+  }
+  summary, _rpof_exit, stdout, stderr = client.dispatch(
+    request: dispatch_request,
+    workdir: opts.fetch(:workdir),
+    output_dir: opts.fetch(:output)
+  )
+  $stdout.write(stdout) unless stdout.empty?
+  $stderr.write(stderr) unless stderr.empty?
+  puts "RPOF campaign: #{summary.fetch('status')} (#{summary.fetch('completed_count')}/#{summary.fetch('job_count')} completed)"
+
+  case summary.fetch("status")
+  when "completed" then exit 0
+  when "workload_failed" then exit 2
+  else exit 1
+  end
+rescue JSON::ParserError, KeyError, ArgumentError, TypeError, SystemCallError,
+       LocalModelEvaluation::RpofClient::Error => e
+  warn "ERROR: RPOF campaign bridge failed: #{e.message}"
+  exit 1
+end

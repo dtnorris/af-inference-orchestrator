@@ -10,6 +10,13 @@ That split is intentional. `af-cli-scoring-utility` remains authoritative for sc
 
 This makes the repo useful for parallelizing the waiting time around local-model evaluation without changing the scoring contract.
 
+RunPod provider implementation is owned by the separate
+`runpod-ollama-fleet` (RPOF) repository. Historical `bin/lme runpod-*` commands
+remain as compatibility shims and invoke RPOF through `bin/lme-rpof`; the
+AFIO-facing readiness and workload path uses the frozen v0.1 versioned JSON
+capability-check and dispatch contracts. Local-only LME operation does not
+require RPOF.
+
 ## v0.2 capabilities
 
 - define Ollama workers as URLs plus environment variables;

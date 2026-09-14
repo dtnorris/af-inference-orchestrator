@@ -159,15 +159,10 @@ mkdir -p "$RUN_ROOT"
 FLEET_CREATED=0
 TUNNELS_STARTED=0
 WATCHDOG_PID=""
-PIDS=()
 
 cleanup() {
   rc=$?
   trap - EXIT INT TERM
-
-  for pid in "${PIDS[@]}"; do
-    kill "$pid" 2>/dev/null || true
-  done
 
   if [[ -n "$WATCHDOG_PID" ]]; then
     kill "$WATCHDOG_PID" 2>/dev/null || true
@@ -223,18 +218,51 @@ info "Opening eight local Ollama tunnels ..."
 LME_RUNPOD_FLEET="$FLEET" "$ROOT/bin/lme" runpod-tunnels start --workers 1-8 | tee "$RUN_ROOT/tunnels-start.log"
 TUNNELS_STARTED=1
 
-if [[ "$FLEET" == "default" ]]; then
-  FLEET_ENV="$ROOT/.env"
-else
-  FLEET_ENV="$ROOT/output/runpod-fleets/fleets/$FLEET/fleet.env"
-fi
-[[ -f "$FLEET_ENV" ]] || die "fleet environment file missing: $FLEET_ENV"
-set -a
-# shellcheck disable=SC1090
-source "$FLEET_ENV"
-set +a
+JOBS_PATH="$RUN_ROOT/jobs.json"
+CAPABILITY_PATH="$RUN_ROOT/capability.json"
+DISPATCH_ROOT="$RUN_ROOT/dispatch"
 
-ACTUAL_FLEET_HOURLY_USD="$(ruby -e 'puts (1..8).sum { |i| ENV.fetch("RUNPOD_BURST_#{i}_HOURLY_RATE").to_f }')"
+ruby -rjson -e '
+  run_root, matcher_repo, model, context, *cases = ARGV
+  jobs = cases.each_with_index.map do |case_spec, offset|
+    query_id, repeat = case_spec.split(":", 2)
+    worker = offset + 1
+    {
+      "job_id" => format("matcher-%02d", worker),
+      "argv" => ["bin/lme-matcher-remote-job", query_id, repeat],
+      "env" => {
+        "AF_MATCHER_REPO_PATH" => matcher_repo,
+        "AF_MATCHER_MODEL" => model,
+        "AF_MATCHER_REPEATS" => "2",
+        "AF_MATCHER_NUM_CTX" => context,
+        "AF_MATCHER_TEMPERATURE" => "",
+        "AF_MATCHER_SEED" => "",
+        "AF_MATCHER_OUTPUT_ROOT" => File.join(run_root, "burst_#{worker}")
+      },
+      "affinity" => "model:#{model}"
+    }
+  end
+  puts JSON.pretty_generate("jobs" => jobs)
+' "$RUN_ROOT" "$MATCHER_REPO" "$MODEL" "$CONTEXT" "${CASES[@]}" >"$JOBS_PATH"
+
+printf 'inference_started_at_utc=%s\n' "$(date -u '+%Y%m%dT%H%M%SZ')" >>"$RUN_ROOT/timing.env"
+info "Dispatching all eight cases through the versioned RPOF capability/dispatch boundary ..."
+LME_RUNPOD_FLEET="$FLEET" "$ROOT/bin/lme-rpof-campaign" \
+  --workers 1-8 \
+  --model "$MODEL" \
+  --expect-digest "$MODEL=$MODEL_DIGEST" \
+  --context "$CONTEXT" \
+  --jobs "$JOBS_PATH" \
+  --workdir "$ROOT" \
+  --output "$DISPATCH_ROOT" \
+  --capability-output "$CAPABILITY_PATH" \
+  --group-by-affinity
+printf 'inference_finished_at_utc=%s\n' "$(date -u '+%Y%m%dT%H%M%SZ')" >>"$RUN_ROOT/timing.env"
+
+ACTUAL_FLEET_HOURLY_USD="$(ruby -rjson -e '
+  value = JSON.parse(File.read(ARGV.fetch(0))).dig("billing", "current_tracked_hourly_rate_usd")
+  print(value) if value
+' "$CAPABILITY_PATH")"
 
 cat >"$RUN_ROOT/provenance.txt" <<EOF
 created_at_utc=$STAMP
@@ -252,56 +280,32 @@ matcher_repo=$MATCHER_REPO
 matcher_git_sha=$MATCHER_SHA
 lme_git_sha=$LME_SHA
 EOF
-printf 'worker\tcase\tollama_url\toutput_root\tlog\n' >"$RUN_ROOT/case-map.tsv"
 
-printf 'inference_started_at_utc=%s\n' "$(date -u '+%Y%m%dT%H%M%SZ')" >>"$RUN_ROOT/timing.env"
-for i in "${!CASES[@]}"; do
-  worker=$((i + 1))
-  case_spec="${CASES[$i]}"
-  query_id="${case_spec%%:*}"
-  repeat="${case_spec##*:}"
-  url_var="LME_BURST_${worker}_URL"
-  url="${!url_var:-}"
-  [[ -n "$url" ]] || die "$url_var is missing after tunnel startup"
+ruby -rjson -e '
+  cases, summary_path, output_path = ARGV
+  cases = cases.split(",")
+  summary = JSON.parse(File.read(summary_path))
+  by_id = summary.fetch("jobs").to_h { |row| [row.fetch("job_id"), row] }
+  File.open(output_path, "w") do |file|
+    file.puts "worker\tcase\tdispatch_job\toutput_root\tstdout\tstderr"
+    cases.each_with_index do |case_spec, offset|
+      worker = offset + 1
+      job_id = format("matcher-%02d", worker)
+      row = by_id.fetch(job_id)
+      file.puts [
+        row.fetch("worker_index"),
+        case_spec,
+        job_id,
+        File.join(File.dirname(output_path), "burst_#{worker}"),
+        row.fetch("stdout_path"),
+        row.fetch("stderr_path")
+      ].join("\t")
+    end
+  end
+' "$(IFS=,; echo "${CASES[*]}")" "$DISPATCH_ROOT/summary.json" "$RUN_ROOT/case-map.tsv"
 
-  worker_root="$RUN_ROOT/burst_${worker}"
-  worker_log="$RUN_ROOT/burst_${worker}.log"
-  mkdir -p "$worker_root"
-  printf '%s\t%s\t%s\t%s\t%s\n' "$worker" "$case_spec" "$url" "$worker_root" "$worker_log" >>"$RUN_ROOT/case-map.tsv"
-
-  info "Dispatching burst_$worker -> $case_spec via $url"
-  (
-    cd "$MATCHER_REPO"
-    OLLAMA_BASE_URL="$url" \
-    AF_MATCHER_MODEL="$MODEL" \
-    AF_MATCHER_REPEATS=2 \
-    AF_MATCHER_NUM_CTX="$CONTEXT" \
-    AF_MATCHER_TEMPERATURE="" \
-    AF_MATCHER_SEED="" \
-    AF_MATCHER_OUTPUT_ROOT="$worker_root" \
-      bin/af-matcher run-case "$query_id" "$repeat"
-  ) >"$worker_log" 2>&1 &
-  PIDS+=("$!")
-done
-
-FAILURES=0
-for i in "${!PIDS[@]}"; do
-  worker=$((i + 1))
-  if wait "${PIDS[$i]}"; then
-    info "PASS burst_$worker (${CASES[$i]})"
-  else
-    info "FAIL burst_$worker (${CASES[$i]}); see $RUN_ROOT/burst_${worker}.log"
-    FAILURES=$((FAILURES + 1))
-  fi
-done
-
-printf 'inference_finished_at_utc=%s\n' "$(date -u '+%Y%m%dT%H%M%SZ')" >>"$RUN_ROOT/timing.env"
 printf 'finished_at_utc=%s\n' "$(date -u '+%Y%m%dT%H%M%SZ')" >>"$RUN_ROOT/provenance.txt"
-printf 'failed_cases=%d\n' "$FAILURES" >>"$RUN_ROOT/provenance.txt"
-
-if ((FAILURES > 0)); then
-  die "$FAILURES matcher case(s) failed"
-fi
+printf 'failed_cases=0\n' >>"$RUN_ROOT/provenance.txt"
 
 info "All 8 matcher cases completed; tearing down paid resources before packaging."
 LME_RUNPOD_FLEET="$FLEET" "$ROOT/bin/lme" runpod-tunnels stop --workers 1-8 | tee "$RUN_ROOT/tunnels-stop.log"

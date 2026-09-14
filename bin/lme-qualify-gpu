@@ -211,15 +211,10 @@ mkdir -p "$RUN_ROOT"
 FLEET_CREATED=0
 TUNNEL_STARTED=0
 WATCHDOG_PID=""
-MATCHER_PID=""
 
 cleanup() {
   rc=$?
   trap - EXIT INT TERM
-
-  if [[ -n "$MATCHER_PID" ]]; then
-    kill "$MATCHER_PID" 2>/dev/null || true
-  fi
 
   if [[ -n "$WATCHDOG_PID" ]]; then
     kill "$WATCHDOG_PID" 2>/dev/null || true
@@ -301,94 +296,50 @@ info "Opening local Ollama tunnel ..."
 "${GPU_ENV[@]}" "$ROOT/bin/lme" runpod-tunnels start --workers 1 | tee "$RUN_ROOT/tunnels-start.log"
 TUNNEL_STARTED=1
 
-if [[ "$FLEET" == "default" ]]; then
-  FLEET_ENV="$ROOT/.env"
-else
-  FLEET_ENV="$ROOT/output/runpod-fleets/fleets/$FLEET/fleet.env"
-fi
-[[ -f "$FLEET_ENV" ]] || die "fleet environment file missing: $FLEET_ENV"
-
-set -a
-# shellcheck disable=SC1090
-source "$FLEET_ENV"
-set +a
-
-OLLAMA_URL="${LME_BURST_1_URL:-}"
-[[ -n "$OLLAMA_URL" ]] || die "LME_BURST_1_URL missing after tunnel startup"
-
-info "Running representative matcher case ${QUERY_ID}-R${REPEAT} ..."
+JOBS_PATH="$RUN_ROOT/jobs.json"
+CAPABILITY_PATH="$RUN_ROOT/capability.json"
+DISPATCH_ROOT="$RUN_ROOT/dispatch"
 MATCHER_OUTPUT="$RUN_ROOT/matcher"
-mkdir -p "$MATCHER_OUTPUT"
-(
-  cd "$MATCHER_REPO"
-  OLLAMA_BASE_URL="$OLLAMA_URL" \
-  AF_MATCHER_MODEL="$MODEL" \
-  AF_MATCHER_REPEATS=2 \
-  AF_MATCHER_NUM_CTX="$CONTEXT" \
-  AF_MATCHER_TEMPERATURE="" \
-  AF_MATCHER_SEED="" \
-  AF_MATCHER_OUTPUT_ROOT="$MATCHER_OUTPUT" \
-    bin/af-matcher run-case "$QUERY_ID" "$REPEAT"
-) >"$RUN_ROOT/matcher.log" 2>&1 &
-MATCHER_PID=$!
-
-if ! wait "$MATCHER_PID"; then
-  MATCHER_PID=""
-  cat "$RUN_ROOT/matcher.log" >&2 || true
-  die "representative matcher case failed"
-fi
-MATCHER_PID=""
-printf 'matcher_finished_at_utc=%s\n' "$(date -u '+%Y%m%dT%H%M%SZ')" >>"$RUN_ROOT/timing.env"
-cat "$RUN_ROOT/matcher.log"
-
-MANIFEST="$(find "$MATCHER_OUTPUT" -name manifest.json -type f -print -quit)"
-[[ -n "$MANIFEST" && -f "$MANIFEST" ]] || die "matcher manifest not found"
-
-info "Capturing post-request Ollama residency evidence ..."
-curl -fsS "${OLLAMA_URL%/}/api/ps" >"$RUN_ROOT/api-ps-after-case.json"
 
 ruby -rjson -e '
-  model, context, ps_path, manifest_path, summary_path = ARGV
-  context = Integer(context)
+  matcher_repo, model, context, query_id, repeat, matcher_output, ps_output, qualification_summary, gpu_id, gpu_memory = ARGV
+  job = {
+    "job_id" => "gpu-qualification",
+    "argv" => ["bin/lme-matcher-remote-job", query_id, repeat],
+    "env" => {
+      "AF_MATCHER_REPO_PATH" => matcher_repo,
+      "AF_MATCHER_MODEL" => model,
+      "AF_MATCHER_REPEATS" => "2",
+      "AF_MATCHER_NUM_CTX" => context,
+      "AF_MATCHER_TEMPERATURE" => "",
+      "AF_MATCHER_SEED" => "",
+      "AF_MATCHER_OUTPUT_ROOT" => matcher_output,
+      "LME_MATCHER_VERIFY_RESIDENCY" => "true",
+      "LME_MATCHER_PS_OUTPUT" => ps_output,
+      "LME_MATCHER_QUALIFICATION_SUMMARY" => qualification_summary,
+      "RUNPOD_GPU_ID" => gpu_id,
+      "RUNPOD_GPU_MEMORY_GB" => gpu_memory
+    }
+  }
+  puts JSON.pretty_generate("jobs" => [job])
+' "$MATCHER_REPO" "$MODEL" "$CONTEXT" "$QUERY_ID" "$REPEAT" \
+  "$MATCHER_OUTPUT" "$RUN_ROOT/api-ps-after-case.json" "$RUN_ROOT/qualification-summary.txt" \
+  "$GPU_ID" "$GPU_MEMORY_GB" >"$JOBS_PATH"
 
-  ps = JSON.parse(File.read(ps_path))
-  row = Array(ps["models"]).find do |candidate|
-    [candidate["name"], candidate["model"]].compact.any? do |name|
-      name == model || name.sub(/:latest\z/, "") == model.sub(/:latest\z/, "")
-    end
-  end
-  abort("model #{model} missing from /api/ps after request") unless row
+info "Running representative matcher case through the versioned RPOF capability/dispatch boundary ..."
+"${GPU_ENV[@]}" "$ROOT/bin/lme-rpof-campaign" \
+  --workers 1 \
+  --model "$MODEL" \
+  --expect-digest "$MODEL=$MODEL_DIGEST" \
+  --context "$CONTEXT" \
+  --gpu "$GPU_ID" \
+  --jobs "$JOBS_PATH" \
+  --workdir "$ROOT" \
+  --output "$DISPATCH_ROOT" \
+  --capability-output "$CAPABILITY_PATH"
+printf 'matcher_finished_at_utc=%s\n' "$(date -u '+%Y%m%dT%H%M%SZ')" >>"$RUN_ROOT/timing.env"
 
-  size = Integer(row.fetch("size"))
-  size_vram = Integer(row.fetch("size_vram"))
-  actual_context = Integer(row.fetch("context_length"))
-  abort("post-request model not fully GPU-resident: size=#{size} size_vram=#{size_vram}") unless size == size_vram
-  abort("post-request context mismatch: expected #{context}, got #{actual_context}") unless actual_context == context
-
-  manifest = JSON.parse(File.read(manifest_path))
-  request = manifest.fetch("requests").fetch(0)
-  seconds = Float(request.fetch("seconds"))
-  eval_count = Integer(request.fetch("eval_count"))
-  eval_duration_ns = request["eval_duration_ns"]
-  generation_seconds = eval_duration_ns ? Float(eval_duration_ns) / 1_000_000_000.0 : nil
-  tokens_per_second = generation_seconds && generation_seconds.positive? ? eval_count / generation_seconds : nil
-
-  File.open(summary_path, "w") do |f|
-    f.puts "qualification=PASS"
-    f.puts "gpu_id=#{ENV.fetch("RUNPOD_GPU_ID")}"
-    f.puts "gpu_memory_min_gb=#{ENV.fetch("RUNPOD_GPU_MEMORY_GB")}"
-    f.puts "model=#{model}"
-    f.puts "context_length=#{actual_context}"
-    f.puts "size_bytes=#{size}"
-    f.puts "size_vram_bytes=#{size_vram}"
-    f.puts "full_gpu_residency=true"
-    f.puts "request_seconds=#{format("%.3f", seconds)}"
-    f.puts "eval_count=#{eval_count}"
-    f.puts "generation_seconds=#{format("%.3f", generation_seconds)}" if generation_seconds
-    f.puts "generation_tokens_per_second=#{format("%.2f", tokens_per_second)}" if tokens_per_second
-  end
-' "$MODEL" "$CONTEXT" "$RUN_ROOT/api-ps-after-case.json" "$MANIFEST" "$RUN_ROOT/qualification-summary.txt"
-
+[[ -f "$RUN_ROOT/qualification-summary.txt" ]] || die "qualification summary was not produced"
 cat "$RUN_ROOT/qualification-summary.txt"
 
 info "Qualification PASS; destroying paid pod before packaging artifacts."
