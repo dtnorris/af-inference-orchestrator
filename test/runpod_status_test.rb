@@ -77,6 +77,27 @@ class RunpodStatusTest < Minitest::Test
     assert_includes output, "Estimated accrued cost: $0.4700"
   end
 
+  def test_status_reports_lease_deadline_and_budget_remaining
+    fleet = fleet_record(workers: [worker(1, "pod_a", 0.44)])
+    fleet["lease"] = {
+      "started_at_utc" => "2026-08-29T20:00:00Z",
+      "max_runtime_seconds" => 3600.0,
+      "max_spend_usd" => 1.0
+    }
+    status = build_status(fleet)
+
+    snapshot = status.snapshot
+    lease = snapshot.fetch("lease")
+    assert_equal "2026-08-29T21:00:00Z", lease.fetch("expires_at_utc")
+    assert_in_delta 0.78, lease.fetch("budget_remaining_usd"), 0.000001
+
+    output = status.render(snapshot)
+    assert_includes output, "Lease deadline: 2026-08-29T21:00:00Z"
+    assert_includes output, "Runtime lease: 01:00:00 max; 00:30:00 remaining"
+    assert_includes output, "Spend lease: $1.0000 max; $0.2200 conservative tracked"
+    assert_includes output, "Budget remaining: $0.7800"
+  end
+
   def test_partial_teardown_stops_cost_clock_for_destroyed_worker
     fleet = fleet_record(
       workers: [

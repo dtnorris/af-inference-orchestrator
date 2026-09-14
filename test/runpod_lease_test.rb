@@ -101,10 +101,16 @@ class RunpodLeaseTest < Minitest::Test
     snapshot = lease.snapshot
 
     assert_equal "active", snapshot.fetch("status")
+    assert_equal "2026-09-13T21:00:00Z", snapshot.fetch("expires_at_utc")
     assert_in_delta 1800.0, snapshot.fetch("runtime_remaining_seconds"), 0.001
     assert_in_delta 0.30, snapshot.fetch("estimated_spend_usd"), 0.000001
     assert_in_delta 0.70, snapshot.fetch("budget_remaining_usd"), 0.000001
     assert_empty snapshot.fetch("expiration_reasons")
+
+    output = lease.render(snapshot)
+    assert_includes output, "Deadline: 2026-09-13T21:00:00Z"
+    assert_includes output, "Runtime remaining: 00:30:00"
+    assert_includes output, "Budget remaining: $0.7000"
   end
 
   private

@@ -162,6 +162,7 @@ module LocalModelEvaluation
       lines << "  Started: #{snapshot.fetch('started_at_utc')}"
       lines << "  Elapsed: #{format_duration(snapshot.fetch('elapsed_seconds'))}"
       if snapshot["max_runtime_seconds"]
+        lines << "  Deadline: #{snapshot.fetch('expires_at_utc')}"
         lines << "  Runtime limit: #{format_duration(snapshot.fetch('max_runtime_seconds'))}"
         lines << "  Runtime remaining: #{format_duration(snapshot.fetch('runtime_remaining_seconds'))}"
       end

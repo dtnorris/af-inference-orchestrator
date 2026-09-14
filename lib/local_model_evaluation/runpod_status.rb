@@ -269,13 +269,15 @@ module LocalModelEvaluation
       lines << "  Lease: #{lease.fetch('status').upcase}"
       lines << "  Lease started: #{lease.fetch('started_at_utc')}"
       if lease["max_runtime_seconds"]
+        lines << "  Lease deadline: #{lease.fetch('expires_at_utc')}"
         lines << "  Runtime lease: #{format_duration(lease.fetch('max_runtime_seconds'))} max; #{format_duration(lease.fetch('runtime_remaining_seconds'))} remaining"
       end
       if lease["max_spend_usd"]
         lines << format(
-          "  Spend lease: $%.4f max; $%.4f conservative tracked; $%.4f remaining",
-          lease.fetch("max_spend_usd"), lease.fetch("estimated_spend_usd"), lease.fetch("budget_remaining_usd")
+          "  Spend lease: $%.4f max; $%.4f conservative tracked",
+          lease.fetch("max_spend_usd"), lease.fetch("estimated_spend_usd")
         )
+        lines << format("  Budget remaining: $%.4f", lease.fetch("budget_remaining_usd"))
       end
       unless lease.fetch("expiration_reasons").empty?
         lines << "  Lease expired by: #{lease.fetch('expiration_reasons').join(', ')}"
