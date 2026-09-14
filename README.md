@@ -182,22 +182,30 @@ the watchdog cannot delete pods until it is running and connected again. The
 spend lease uses recorded GPU rates and intentionally does not claim to cap
 storage, network, taxes, credits, provider billing granularity, or other charges.
 
-Active fleets can grow without recreating existing workers, and an individual
+Active fleets can resize without recreating retained workers, and an individual
 logical slot can be replaced without changing its `burst_N` identity:
 
 ```bash
 bin/lme runpod-scale --workers 8 --fleet scoring-a6000 --dry-run
+bin/lme runpod-scale --workers 4 --fleet scoring-a6000 --dry-run
 bin/lme runpod-replace --worker 7 --fleet scoring-a6000 --dry-run
 ```
 
-`runpod-scale` interprets `--workers N` as the target logical fleet size and only
-creates the new contiguous slots above the current size. `runpod-replace` deletes
-the recorded physical pod for one slot before creating its replacement, so it
-does not intentionally overlap two paid pods for that slot. Both operations use
-the fleet's recorded cloud, GPU, image, container-disk, and `/workspace` volume
-contract and retain the existing hourly and aggregate cost caps. Fleets created
-before provisioning metadata was recorded fail closed rather than guessing their
-storage profile; recreate those fleets once before using scale/replace.
+`runpod-scale` interprets `--workers N` as the target contiguous logical fleet
+size. Scaling up creates only new slots above the current size. Scaling down
+deletes only highest-numbered tail slots, so it cannot create holes in
+`burst_1..burst_N`; retired physical generations remain recorded in fleet state
+and continue contributing to conservative lease-spend accounting. A later
+scale-up of the same logical slots starts the next physical generation rather
+than losing their lineage. Cost-reducing scale-down remains available even when
+a spend/runtime lease or hourly cap has already been exceeded.
+
+`runpod-replace` deletes the recorded physical pod for one slot before creating
+its replacement, so it does not intentionally overlap two paid pods for that
+slot. Scale-up and replacement use the fleet's recorded cloud, GPU, image,
+container-disk, and `/workspace` volume contract and retain the existing hourly
+and aggregate cost caps. Fleets created before provisioning metadata was recorded
+fail closed rather than guessing storage sizes for operations that create pods.
 
 A replacement preserves the logical local endpoint and records the prior physical
 pod as generation history in fleet state. A failed replacement leaves the slot

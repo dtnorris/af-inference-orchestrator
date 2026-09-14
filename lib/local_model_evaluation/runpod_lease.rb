@@ -23,7 +23,8 @@ module LocalModelEvaluation
       end
 
       elapsed_seconds = [now - started_at, 0.0].max
-      estimated_spend_usd = Array(fleet.fetch("workers")).sum do |worker|
+      tracked_workers = Array(fleet.fetch("workers")) + Array(fleet["retired_workers"])
+      estimated_spend_usd = tracked_workers.sum do |worker|
         worker_stop = if worker.fetch("status") == "destroyed" && worker["destroyed_at_utc"]
                         parse_time(worker["destroyed_at_utc"], "worker destroyed_at_utc")
                       else

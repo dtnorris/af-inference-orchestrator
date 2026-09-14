@@ -14,6 +14,7 @@ module LocalModelEvaluation
 
     Preflight = Struct.new(
       :operation,
+      :scale_direction,
       :fleet_id,
       :worker_indices,
       :target_worker_count,
@@ -47,41 +48,86 @@ module LocalModelEvaluation
     end
 
     def preflight_scale(target_worker_count:, max_fleet_hourly_usd: RunpodFleet::DEFAULT_MAX_FLEET_HOURLY_USD)
-      fleet = lifecycle_fleet!
       target = validate_worker_count(target_worker_count)
+      fleet = lifecycle_fleet!(enforce_lease: false)
       current_count = Integer(fleet.fetch("worker_count"))
-      raise Error, "scale target must be greater than current worker count #{current_count}" unless target > current_count
+      raise Error, "scale target already equals current worker count #{current_count}" if target == current_count
 
       assert_contiguous_slots!(fleet, current_count)
-      inactive = Array(fleet.fetch("workers")).reject { |worker| worker["status"] == "active" }
-      unless inactive.empty?
-        slots = inactive.map { |worker| "burst_#{worker.fetch('index')}=#{worker.fetch('status')}" }.join(", ")
-        raise Error, "replace inactive slot(s) before scaling: #{slots}"
-      end
-      indices = ((current_count + 1)..target).to_a
-      profile = provisioning_profile!(fleet)
-      reject_duplicate_names!(indices)
-      gpu, availability, rate = capacity!(fleet, count: indices.length)
       current_rate = active_hourly_rate(fleet)
       cap = positive_float(max_fleet_hourly_usd, "max fleet hourly cost")
-      projected_rate = current_rate + (rate * indices.length)
-      enforce_fleet_cap!(projected_rate, cap)
+
+      if target > current_count
+        ensure_lease_active!(fleet)
+        inactive = Array(fleet.fetch("workers")).reject { |worker| worker["status"] == "active" }
+        unless inactive.empty?
+          slots = inactive.map { |worker| "burst_#{worker.fetch('index')}=#{worker.fetch('status')}" }.join(", ")
+          raise Error, "replace inactive slot(s) before scaling up: #{slots}"
+        end
+
+        indices = ((current_count + 1)..target).to_a
+        profile = provisioning_profile!(fleet)
+        reject_duplicate_names!(indices)
+        gpu, availability, rate = capacity!(fleet, count: indices.length)
+        projected_rate = current_rate + (rate * indices.length)
+        enforce_fleet_cap!(projected_rate, cap)
+
+        return Preflight.new(
+          operation: "scale",
+          scale_direction: "up",
+          fleet_id: fleet.fetch("fleet_id"),
+          worker_indices: indices,
+          target_worker_count: target,
+          current_worker_count: current_count,
+          gpu:,
+          cloud: fleet.fetch("cloud"),
+          availability:,
+          hourly_rate: rate,
+          current_fleet_hourly_rate: current_rate,
+          projected_fleet_hourly_rate: projected_rate,
+          max_fleet_hourly_rate: cap,
+          container_disk_gb: profile.fetch("container_disk_gb"),
+          volume_gb: profile.fetch("volume_gb")
+        )
+      end
+
+      retained = Array(fleet.fetch("workers")).select { |worker| Integer(worker.fetch("index")) <= target }
+      inactive_retained = retained.reject { |worker| worker["status"] == "active" }
+      unless inactive_retained.empty?
+        slots = inactive_retained.map { |worker| "burst_#{worker.fetch('index')}=#{worker.fetch('status')}" }.join(", ")
+        raise Error, "cannot scale down while retained slot(s) are inactive: #{slots}"
+      end
+
+      indices = ((target + 1)..current_count).to_a.reverse
+      removable = indices.map { |index| worker_by_index(fleet, index) }
+      invalid = removable.reject { |worker| %w[active destroyed].include?(worker.fetch("status").to_s) }
+      unless invalid.empty?
+        slots = invalid.map { |worker| "burst_#{worker.fetch('index')}=#{worker.fetch('status')}" }.join(", ")
+        raise Error, "cannot scale down slot(s) in transitional state: #{slots}"
+      end
+      removable.each { |worker| reject_unexpected_replacement_name!(worker) }
+
+      removed_active_rate = removable.sum do |worker|
+        worker["status"] == "active" ? Float(worker.fetch("hourly_rate_usd")) : 0.0
+      end
+      projected_rate = [current_rate - removed_active_rate, 0.0].max
 
       Preflight.new(
         operation: "scale",
+        scale_direction: "down",
         fleet_id: fleet.fetch("fleet_id"),
         worker_indices: indices,
         target_worker_count: target,
         current_worker_count: current_count,
-        gpu:,
+        gpu: fleet.fetch("gpu"),
         cloud: fleet.fetch("cloud"),
-        availability:,
-        hourly_rate: rate,
+        availability: nil,
+        hourly_rate: nil,
         current_fleet_hourly_rate: current_rate,
         projected_fleet_hourly_rate: projected_rate,
         max_fleet_hourly_rate: cap,
-        container_disk_gb: profile.fetch("container_disk_gb"),
-        volume_gb: profile.fetch("volume_gb")
+        container_disk_gb: nil,
+        volume_gb: nil
       )
     end
 
@@ -125,6 +171,8 @@ module LocalModelEvaluation
     def scale(target_worker_count:, ssh_public_key:, preflight:, max_fleet_hourly_usd: RunpodFleet::DEFAULT_MAX_FLEET_HOURLY_USD,
               wait_seconds: RunpodFleet::DEFAULT_WAIT_SECONDS, poll_seconds: RunpodFleet::DEFAULT_POLL_SECONDS)
       verify_preflight!(preflight, operation: "scale")
+      raise Error, "scale-up requires an up preflight" unless preflight.scale_direction == "up"
+
       with_lifecycle_lock(preflight.fleet_id) do
         fleet = lifecycle_fleet!(expected_fleet_id: preflight.fleet_id)
         current_count = Integer(fleet.fetch("worker_count"))
@@ -185,6 +233,42 @@ module LocalModelEvaluation
           raise e if e.is_a?(Interrupt) || e.is_a?(Error)
           raise Error, e.message
         end
+      end
+    end
+
+    def shrink(target_worker_count:, preflight:)
+      verify_preflight!(preflight, operation: "scale")
+      raise Error, "scale-down requires a down preflight" unless preflight.scale_direction == "down"
+
+      with_lifecycle_lock(preflight.fleet_id) do
+        fleet = lifecycle_fleet!(expected_fleet_id: preflight.fleet_id, enforce_lease: false)
+        current_count = Integer(fleet.fetch("worker_count"))
+        target = validate_worker_count(target_worker_count)
+        unless current_count == preflight.current_worker_count && target == preflight.target_worker_count
+          raise Error, "fleet changed since scale preflight; run preflight again"
+        end
+
+        retired = []
+        preflight.worker_indices.each do |index|
+          current = lifecycle_fleet!(expected_fleet_id: preflight.fleet_id, enforce_lease: false)
+          highest = Array(current.fetch("workers")).map { |worker| Integer(worker.fetch("index")) }.max
+          unless highest == index
+            raise Error, "scale-down must retire contiguous tail slots; expected burst_#{highest}, got burst_#{index}"
+          end
+
+          worker = worker_by_index(current, index)
+          raise Error, "current fleet no longer contains burst_#{index}" unless worker
+          unless %w[active destroyed].include?(worker.fetch("status").to_s)
+            raise Error, "burst_#{index} cannot be retired from state #{worker.fetch('status').inspect}"
+          end
+
+          reject_unexpected_replacement_name!(worker)
+          delete_scaled_worker_pod(worker)
+          @fleet_state.retire_tail_worker(index, destroyed_at_utc: utc_now)
+          remove_worker_env([index])
+          retired << index
+        end
+        retired
       end
     end
 
@@ -287,7 +371,7 @@ module LocalModelEvaluation
       raise Error, e.message
     end
 
-    def lifecycle_fleet!(expected_fleet_id: nil)
+    def lifecycle_fleet!(expected_fleet_id: nil, enforce_lease: true)
       fleet = @fleet_state.current
       raise Error, "no current RunPod fleet state exists; provision a fleet first" unless fleet
       raise Error, "current RunPod fleet #{fleet.fetch('fleet_id')} is not active" unless fleet["status"] == "active"
@@ -299,7 +383,7 @@ module LocalModelEvaluation
       unless fleet.fetch("image").to_s == RunpodFleet::IMAGE
         raise Error, "current fleet image does not match configured RunPod image"
       end
-      ensure_lease_active!(fleet)
+      ensure_lease_active!(fleet) if enforce_lease
       fleet
     rescue RunpodFleetState::Error, KeyError, ArgumentError, TypeError => e
       raise Error, e.message
@@ -366,6 +450,25 @@ module LocalModelEvaluation
 
       raise Error,
             "#{expected_name} resolves to unexpected pod #{matches.first['id']}; recorded pod is #{worker.fetch('pod_id')}"
+    end
+
+    def delete_scaled_worker_pod(worker)
+      pod_id = worker.fetch("pod_id").to_s
+      expected_name = worker_name(Integer(worker.fetch("index")))
+      begin
+        pod = @client.get_pod(pod_id)
+      rescue RunpodClient::Error => e
+        return if e.status == 404
+        raise
+      end
+      unless pod["name"].to_s == expected_name
+        raise Error, "refusing to delete #{pod_id}: expected name #{expected_name.inspect}, got #{pod['name'].inspect}"
+      end
+
+      @client.delete_pod(pod_id)
+      @out.puts "Deleted scaled-down #{expected_name}: #{pod_id}"
+    rescue RunpodClient::Error => e
+      raise Error, e.message
     end
 
     def delete_replaced_pod(worker)

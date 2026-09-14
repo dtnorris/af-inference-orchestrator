@@ -125,8 +125,17 @@ module LocalModelEvaluation
 
       created_at_utc_by_index = created_at_utc_by_index.transform_keys { |key| Integer(key) }
       worker_records = workers.map do |worker|
-        started_at = parse_time(created_at_utc_by_index.fetch(Integer(worker.index)), "burst_#{worker.index} created_at_utc")
-        worker_record(worker, created_at: started_at, generation: 1)
+        index = Integer(worker.index)
+        started_at = parse_time(created_at_utc_by_index.fetch(index), "burst_#{worker.index} created_at_utc")
+        retired = latest_retired_worker(record, index)
+        generation = retired ? Integer(retired.fetch("generation", 1)) + 1 : 1
+        entry = worker_record(worker, created_at: started_at, generation:)
+        if retired
+          history = Array(retired["history"]).map(&:dup)
+          history << historical_worker(retired)
+          entry["history"] = history
+        end
+        entry
       end
       record.fetch("workers").concat(worker_records)
       record["workers"].sort_by! { |worker| Integer(worker.fetch("index")) }
@@ -135,6 +144,42 @@ module LocalModelEvaluation
       record
     rescue KeyError, ArgumentError, TypeError => e
       raise Error, "could not add workers: #{e.message}"
+    end
+
+    def retire_tail_worker(index, destroyed_at_utc:)
+      record = active_record!
+      index = RunpodWorkers.validate_index(index)
+      workers = record.fetch("workers")
+      raise Error, "cannot retire the final RunPod worker" if workers.length <= 1
+
+      highest = workers.map { |worker| Integer(worker.fetch("index")) }.max
+      unless index == highest
+        raise Error, "can only retire highest contiguous slot burst_#{highest}; got burst_#{index}"
+      end
+
+      worker = fetch_worker!(record, index)
+      unless %w[active destroyed].include?(worker.fetch("status").to_s)
+        raise Error, "burst_#{index} cannot be retired from state #{worker.fetch('status').inspect}"
+      end
+
+      retired = Marshal.load(Marshal.dump(worker))
+      retired["status"] = "destroyed"
+      retired["destroyed_at_utc"] ||= parse_time(
+        destroyed_at_utc,
+        "burst_#{index} destroyed_at_utc"
+      ).iso8601
+      retired.delete("replacement_pending")
+      retired.delete("replacement_previous_status")
+      retired.delete("replacement_started_at_utc")
+
+      record["retired_workers"] ||= []
+      record.fetch("retired_workers") << retired
+      workers.delete(worker)
+      refresh_fleet_totals!(record)
+      write_record(record)
+      record
+    rescue RunpodWorkers::Error, ArgumentError, TypeError => e
+      raise Error, "could not retire worker: #{e.message}"
     end
 
     def begin_replacement(index)
@@ -354,6 +399,12 @@ module LocalModelEvaluation
       raise Error, e.message
     end
 
+    def latest_retired_worker(record, index)
+      Array(record["retired_workers"])
+        .select { |worker| Integer(worker.fetch("index")) == index }
+        .max_by { |worker| Integer(worker.fetch("generation", 1)) }
+    end
+
     def worker_record(worker, created_at:, generation:)
       {
         "index" => Integer(worker.index),
@@ -461,9 +512,14 @@ module LocalModelEvaluation
       end
       normalize_lease(record["lease"]) if record["lease"]
       normalize_provisioning(record["provisioning"]) if record["provisioning"]
-      workers.each do |worker|
+      tracked_workers = workers + Array(record["retired_workers"])
+      tracked_workers.each do |worker|
+        RunpodWorkers.validate_index(worker.fetch("index"))
         Integer(worker.fetch("generation", 1))
         parse_time(worker["created_at_utc"], "worker created_at_utc") if worker["created_at_utc"]
+        if worker["status"] == "destroyed" && worker["destroyed_at_utc"]
+          parse_time(worker.fetch("destroyed_at_utc"), "worker destroyed_at_utc")
+        end
         Array(worker["history"]).each do |prior|
           Integer(prior.fetch("generation", 1))
           prior.fetch("pod_id")
