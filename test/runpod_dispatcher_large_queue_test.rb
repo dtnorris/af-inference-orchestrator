@@ -29,6 +29,12 @@ class RunpodDispatcherLargeQueueTest < Minitest::Test
     end
   end
 
+  class StaticFleetState < FakeFleetState
+    def current
+      @fleet
+    end
+  end
+
   class HealthyEndpoints
     def check(_endpoint)
       Health.new(healthy: true)
@@ -38,9 +44,10 @@ class RunpodDispatcherLargeQueueTest < Minitest::Test
   class TrackingRunner
     attr_reader :calls, :max_active_by_worker, :environments
 
-    def initialize(delay: 0.0, barrier_size: nil)
+    def initialize(delay: 0.0, barrier_size: nil, write_logs: true)
       @delay = delay
       @barrier_size = barrier_size
+      @write_logs = write_logs
       @calls = []
       @environments = {}
       @active_by_worker = Hash.new(0)
@@ -61,8 +68,10 @@ class RunpodDispatcherLargeQueueTest < Minitest::Test
         wait_for_first_wave(worker) if @barrier_size
       end
       sleep @delay if @delay.positive?
-      File.write(stdout_path, "#{job_id} via #{env.fetch('LME_OLLAMA_URL')} in #{chdir}\n")
-      File.write(stderr_path, "")
+      if @write_logs
+        File.write(stdout_path, "#{job_id} via #{env.fetch('LME_OLLAMA_URL')} in #{chdir}\n")
+        File.write(stderr_path, "")
+      end
       0
     ensure
       @mutex.synchronize { @active_by_worker[worker] -= 1 } if worker
@@ -79,6 +88,36 @@ class RunpodDispatcherLargeQueueTest < Minitest::Test
       else
         @barrier.wait(@mutex) while @barrier_workers.length < @barrier_size
       end
+    end
+  end
+
+  class SchedulingOnlyDispatcher < LocalModelEvaluation::RunpodDispatcher
+    private
+
+    def execute(job, worker)
+      job_id = job.fetch("job_id")
+      index = Integer(worker.fetch("index"))
+      endpoint = worker.fetch("local_ollama_url")
+      env = job.fetch("env").merge(
+        "LME_JOB_ID" => job_id,
+        "LME_WORKER_INDEX" => index.to_s,
+        "LME_OLLAMA_URL" => endpoint
+      )
+      exit_status = @command_runner.run(
+        argv: job.fetch("argv"),
+        env:,
+        stdout_path: File::NULL,
+        stderr_path: File::NULL,
+        chdir: @repo_root
+      )
+      result = {
+        "job_id" => job_id,
+        "worker_index" => index,
+        "worker_url" => endpoint,
+        "status" => exit_status.zero? ? "completed" : "failed",
+        "exit_status" => exit_status
+      }
+      @state_mutex.synchronize { @results << result }
     end
   end
 
@@ -169,9 +208,14 @@ class RunpodDispatcherLargeQueueTest < Minitest::Test
   end
 
   def test_nine_hundred_jobs_complete_exactly_once_across_sixteen_workers
-    fleet_state = FakeFleetState.new(16)
-    runner = TrackingRunner.new(barrier_size: 16)
-    dispatcher = build_dispatcher(fleet_state, runner, "nine-hundred-on-sixteen")
+    fleet_state = StaticFleetState.new(16)
+    runner = TrackingRunner.new(barrier_size: 16, write_logs: false)
+    dispatcher = build_dispatcher(
+      fleet_state,
+      runner,
+      "nine-hundred-on-sixteen",
+      dispatcher_class: SchedulingOnlyDispatcher
+    )
     planned_jobs = jobs(900)
 
     summary = dispatcher.run(jobs: planned_jobs, worker_indices: (1..16).to_a)
@@ -189,7 +233,11 @@ class RunpodDispatcherLargeQueueTest < Minitest::Test
     )
     assert runner.max_active_by_worker.values.all? { |maximum| maximum == 1 }
     assert_equal 900, summary.fetch("jobs").length
-    assert_equal 900, Dir.glob(File.join(dispatcher.output_dir, "jobs", "*", "metadata.json")).length
+
+    manifest = JSON.parse(File.read(File.join(dispatcher.output_dir, "manifest.json")))
+    persisted_summary = JSON.parse(File.read(File.join(dispatcher.output_dir, "summary.json")))
+    assert_equal 900, manifest.fetch("job_count")
+    assert_equal 900, persisted_summary.fetch("completed_count")
   end
 
   def test_unexpected_worker_loop_crash_is_quarantined_and_queue_resumes
@@ -310,8 +358,8 @@ class RunpodDispatcherLargeQueueTest < Minitest::Test
     end
   end
 
-  def build_dispatcher(fleet_state, runner, name)
-    LocalModelEvaluation::RunpodDispatcher.new(
+  def build_dispatcher(fleet_state, runner, name, dispatcher_class: LocalModelEvaluation::RunpodDispatcher)
+    dispatcher_class.new(
       fleet_state:,
       output_dir: File.join(@tmp, name),
       repo_root: @tmp,
