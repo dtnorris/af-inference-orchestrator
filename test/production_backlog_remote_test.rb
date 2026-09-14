@@ -16,6 +16,8 @@ class ProductionBacklogRemoteTest < Minitest::Test
     copy("bin/lme-production-remote-job")
     copy("lib/production_backlog_runner_policy.rb")
     copy("lib/production_backlog_runtime_contract.rb")
+    copy("lib/local_model_evaluation/rpof_client.rb")
+    copy("config/models.yml")
   end
 
   def teardown
@@ -31,21 +33,80 @@ class ProductionBacklogRemoteTest < Minitest::Test
       #!/usr/bin/env ruby
       File.write(File.join(ENV.fetch("LME_REPO"), "source-preflight-called"), ARGV.join("\n"))
     RUBY
-    executable("bin/lme-runpod-dispatch", <<~'RUBY')
+    executable("bin/lme-rpof", <<~'RUBY')
       #!/usr/bin/env ruby
+      require "fileutils"
       require "json"
+
       root = ENV.fetch("LME_REPO")
-      File.write(File.join(root, "dispatch-argv.json"), JSON.dump(ARGV))
-      jobs_index = ARGV.index("--jobs") or abort "missing --jobs"
-      jobs_path = ARGV.fetch(jobs_index + 1)
-      File.write(File.join(root, "dispatched-jobs.json"), File.read(jobs_path))
-      File.write(
-        File.join(root, "dispatch-env.json"),
-        JSON.dump(
-          "social" => ENV["AF_SOCIAL_INTERACTION_GUARDRAIL_PROFILE"],
-          "investigation" => ENV["AF_INVESTIGATION_GUARDRAIL_PROFILE"]
+      command = ARGV.shift
+
+      case command
+      when "capability-check"
+        request_index = ARGV.index("--request") or abort "missing --request"
+        output_index = ARGV.index("--output") or abort "missing --output"
+        request = JSON.parse(File.read(ARGV.fetch(request_index + 1)))
+
+        File.write(
+          File.join(root, "capability-request.json"),
+          JSON.pretty_generate(request) + "\n"
         )
-      )
+        File.write(
+          ARGV.fetch(output_index + 1),
+          JSON.pretty_generate(
+            "contract_version" => "afio-rpof-capability-check-result/v0.1",
+            "ready" => true,
+            "fleet_key" => request.fetch("fleet_key"),
+            "fleet_id" => "fixture-fleet-id",
+            "selected_worker_indices" => [1, 2],
+            "capabilities" => nil,
+            "diagnostics" => []
+          ) + "\n"
+        )
+      when "dispatch"
+        request_index = ARGV.index("--request") or abort "missing --request"
+        output_index = ARGV.index("--output") or abort "missing --output"
+        request = JSON.parse(File.read(ARGV.fetch(request_index + 1)))
+        output_dir = ARGV.fetch(output_index + 1)
+        FileUtils.mkdir_p(output_dir)
+
+        File.write(
+          File.join(root, "dispatch-request.json"),
+          JSON.pretty_generate(request) + "\n"
+        )
+        File.write(
+          File.join(root, "dispatched-jobs.json"),
+          JSON.pretty_generate("jobs" => request.fetch("jobs")) + "\n"
+        )
+        File.write(
+          File.join(root, "dispatch-env.json"),
+          JSON.dump(
+            "social" => ENV["AF_SOCIAL_INTERACTION_GUARDRAIL_PROFILE"],
+            "investigation" => ENV["AF_INVESTIGATION_GUARDRAIL_PROFILE"]
+          )
+        )
+        File.write(
+          File.join(output_dir, "summary.json"),
+          JSON.pretty_generate(
+            "contract_version" => "afio-rpof-dispatch-summary/v0.1",
+            "fleet_key" => request.dig("target", "fleet_key"),
+            "fleet_id" => request.dig("target", "expected_fleet_id"),
+            "started_at_utc" => "2026-09-14T12:00:00Z",
+            "finished_at_utc" => "2026-09-14T12:00:01Z",
+            "status" => "completed",
+            "worker_count" => 2,
+            "job_count" => request.fetch("jobs").length,
+            "completed_count" => request.fetch("jobs").length,
+            "failed_count" => 0,
+            "not_started_count" => 0,
+            "not_started_job_ids" => [],
+            "infrastructure_failures" => [],
+            "jobs" => []
+          ) + "\n"
+        )
+      else
+        abort "unexpected RPOF command: #{command.inspect}"
+      end
     RUBY
 
     core = ProductionBacklogRuntimeContract::QWEN35_CORE_DIMENSIONS.first
@@ -78,10 +139,25 @@ class ProductionBacklogRemoteTest < Minitest::Test
     assert_equal({}, jobs.last.fetch("env"))
     assert_equal %w[model:qwen model:gptoss], jobs.map { |job| job.fetch("affinity") }
 
-    argv = JSON.parse(File.read(File.join(@root, "dispatch-argv.json")))
-    assert_includes argv, "--all"
-    assert_includes argv, "--group-by-affinity"
-    assert_includes argv, File.join(@root, "output", "remote-campaign")
+    capability = JSON.parse(File.read(File.join(@root, "capability-request.json")))
+    assert_equal "afio-rpof-capability-check-request/v0.1", capability.fetch("contract_version")
+    assert_equal "default", capability.fetch("fleet_key")
+    assert_equal({ "mode" => "all" }, capability.fetch("worker_selector"))
+    assert_equal(
+      %w[qwen3.6:35b-a3b gpt-oss:20b],
+      capability.dig("requirements", "models").map { |model| model.fetch("name") }
+    )
+    assert_equal 131_072, capability.dig("requirements", "required_context_length")
+    assert_equal true, capability.dig("requirements", "require_fully_gpu_resident")
+
+    dispatch = JSON.parse(File.read(File.join(@root, "dispatch-request.json")))
+    assert_equal "afio-rpof-dispatch-request/v0.1", dispatch.fetch("contract_version")
+    assert_equal "default", dispatch.dig("target", "fleet_key")
+    assert_equal "fixture-fleet-id", dispatch.dig("target", "expected_fleet_id")
+    assert_equal [1, 2], dispatch.dig("target", "worker_indices")
+    assert_equal true, dispatch.fetch("group_by_affinity")
+    assert_equal jobs, dispatch.fetch("jobs")
+
     env = JSON.parse(File.read(File.join(@root, "dispatch-env.json")))
     assert_equal "phase6-v0.3", env.fetch("social")
     assert_equal "phase6-v0.4", env.fetch("investigation")

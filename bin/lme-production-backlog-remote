@@ -11,8 +11,9 @@ ROOT = File.expand_path(ENV.fetch("LME_REPO", File.expand_path("..", __dir__)))
 ENV["LME_REPO"] = ROOT
 $LOAD_PATH.unshift File.join(ROOT, "lib")
 require "production_backlog_runner_policy"
+require "local_model_evaluation/rpof_client"
 
-opts = { workers: nil, all: false, output: nil, fleet: nil, group_by_model: false }
+opts = { workers: nil, all: false, output: nil, fleet: nil, group_by_model: false, context: ENV.fetch("LME_RUNPOD_REQUIRED_CONTEXT", "131072").to_i }
 parser = OptionParser.new do |o|
   o.banner = "Usage: bin/lme-production-backlog-remote QUEUE (--workers LIST|--all) --output DIR [--group-by-model] [--fleet KEY]"
   o.on("--workers LIST", "Managed RunPod worker indices, e.g. 1-16 or 1,4,8") { |v| opts[:workers] = v }
@@ -20,6 +21,7 @@ parser = OptionParser.new do |o|
   o.on("--output DIR", "Generic dispatch evidence directory; existing matching output resumes") { |v| opts[:output] = v }
   o.on("--group-by-model", "Group remote jobs by frozen manifest model alias to reduce model reload thrashing") { opts[:group_by_model] = true }
   o.on("--fleet KEY", "Managed RunPod fleet key") { |v| opts[:fleet] = v }
+  o.on("--context N", Integer, "Required bootstrapped Ollama context (default: 131072)") { |v| opts[:context] = v }
 end
 
 begin
@@ -30,6 +32,7 @@ begin
   raise OptionParser::MissingArgument, "--output" unless opts[:output]
   raise OptionParser::InvalidArgument, "use either --workers or --all, not both" if opts[:workers] && opts[:all]
   raise OptionParser::InvalidArgument, "use --workers LIST or --all" unless opts[:workers] || opts[:all]
+  raise OptionParser::InvalidArgument, "--context must be positive" unless opts[:context].positive?
 rescue OptionParser::ParseError => e
   warn "ERROR: #{e.message}"
   warn parser
@@ -59,6 +62,7 @@ end
 manifests = File.readlines(order_path, chomp: true).reject { |line| line.strip.empty? }
 abort "ERROR: frozen queue is empty: #{order_path}" if manifests.empty?
 
+model_aliases = []
 jobs = manifests.each_with_index.map do |manifest_arg, index|
   manifest_path = File.expand_path(manifest_arg, ROOT)
   abort "ERROR: missing frozen manifest #{manifest_path}" unless File.file?(manifest_path)
@@ -68,6 +72,7 @@ jobs = manifests.each_with_index.map do |manifest_arg, index|
   end
 
   models = Array(manifest["models"]).map(&:to_s)
+  model_aliases.concat(models)
   if opts[:group_by_model] && (models.length != 1 || models.first.empty?)
     abort "ERROR: --group-by-model requires exactly one frozen manifest model: #{manifest_arg}"
   end
@@ -86,6 +91,16 @@ jobs = manifests.each_with_index.map do |manifest_arg, index|
   job["affinity"] = "model:#{models.first}" if opts[:group_by_model]
   job
 end
+
+model_config = YAML.safe_load_file(File.join(ROOT, "config", "models.yml"), aliases: true).fetch("models")
+begin
+  required_ollama_models = model_aliases.uniq.map do |alias_name|
+    model_config.fetch(alias_name).fetch("ollama_model").to_s
+  end
+rescue KeyError => e
+  abort "ERROR: remote production bridge cannot resolve frozen model alias: #{e.message}"
+end
+abort "ERROR: remote production bridge resolved no Ollama models" if required_ollama_models.empty?
 
 output_dir = File.expand_path(opts.fetch(:output), ROOT)
 jobs_path = "#{output_dir}.jobs.json"
@@ -107,19 +122,47 @@ end
 ENV["AF_SOCIAL_INTERACTION_GUARDRAIL_PROFILE"] = "phase6-v0.3"
 ENV["AF_INVESTIGATION_GUARDRAIL_PROFILE"] = "phase6-v0.4"
 
-dispatch = [
-  RbConfig.ruby,
-  File.join(ROOT, "bin", "lme-runpod-dispatch"),
-  "--jobs", jobs_path,
-  "--output", output_dir
-]
-if opts[:all]
-  dispatch << "--all"
-else
-  dispatch.concat(["--workers", opts.fetch(:workers)])
+fleet_key = opts[:fleet] || ENV.fetch("LME_RUNPOD_FLEET", "default")
+worker_selector = if opts[:all]
+                    { "mode" => "all" }
+                  else
+                    {
+                      "mode" => "indices",
+                      "indices" => LocalModelEvaluation::RpofClient.expand_worker_selector(opts.fetch(:workers))
+                    }
+                  end
+client = LocalModelEvaluation::RpofClient.new(repo_root: ROOT)
+capability_request = {
+  "contract_version" => "afio-rpof-capability-check-request/v0.1",
+  "fleet_key" => fleet_key,
+  "worker_selector" => worker_selector,
+  "requirements" => {
+    "models" => required_ollama_models.map { |name| { "name" => name } },
+    "required_context_length" => opts.fetch(:context),
+    "require_fully_gpu_resident" => true
+  }
+}
+
+begin
+  capability = client.capability_check(capability_request)
+rescue LocalModelEvaluation::RpofClient::Error => e
+  abort "ERROR: RPOF capability bridge failed: #{e.message}"
 end
-dispatch << "--group-by-affinity" if opts[:group_by_model]
-dispatch.concat(["--fleet", opts[:fleet]]) if opts[:fleet]
+unless capability.fetch("ready")
+  details = capability.fetch("diagnostics").select { |row| row["status"] == "FAIL" }.map { |row| "#{row['code']}: #{row['detail']}" }
+  abort "ERROR: RPOF capability check failed: #{details.join('; ')}"
+end
+
+dispatch_request = {
+  "contract_version" => "afio-rpof-dispatch-request/v0.1",
+  "target" => {
+    "fleet_key" => fleet_key,
+    "expected_fleet_id" => capability.fetch("fleet_id"),
+    "worker_indices" => capability.fetch("selected_worker_indices")
+  },
+  "group_by_affinity" => opts[:group_by_model],
+  "jobs" => jobs
+}
 
 puts "Remote production campaign"
 puts "  Queue: #{queue_arg}"
@@ -127,5 +170,25 @@ puts "  Frozen manifests: #{jobs.length}"
 puts "  Dispatch evidence: #{output_dir}"
 puts "  Job ledger: #{jobs_path}"
 puts "  Model grouping: #{opts[:group_by_model] ? 'enabled' : 'disabled (FIFO)'}"
+puts "  RPOF fleet: #{fleet_key} / #{capability.fetch('fleet_id')}"
+puts "  RPOF workers: #{capability.fetch('selected_worker_indices').join(', ')}"
 puts "  Frozen manifests are read-only; remote routing is execution-time only."
-exec(*dispatch, chdir: ROOT)
+
+begin
+  summary, _rpof_exit, stdout, stderr = client.dispatch(
+    request: dispatch_request,
+    workdir: ROOT,
+    output_dir: output_dir
+  )
+  $stdout.write(stdout) unless stdout.empty?
+  $stderr.write(stderr) unless stderr.empty?
+rescue LocalModelEvaluation::RpofClient::Error => e
+  warn "ERROR: RPOF dispatch bridge failed: #{e.message}"
+  exit 1
+end
+
+case summary.fetch("status")
+when "completed" then exit 0
+when "workload_failed" then exit 2
+else exit 1
+end

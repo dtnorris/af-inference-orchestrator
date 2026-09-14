@@ -3,6 +3,8 @@
 
 root = File.expand_path("..", __dir__)
 executable = ENV["RPOF_EXECUTABLE"].to_s.strip
+ENV["RPOF_STATE_ROOT"] ||= File.join(root, "output", "runpod-fleets")
+ENV["RPOF_STATE_REPO_ROOT"] ||= root
 executable = File.expand_path("../runpod-ollama-fleet/bin/rpof", root) if executable.empty?
 
 unless File.file?(executable) && File.executable?(executable)

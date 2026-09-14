@@ -64,7 +64,7 @@ end
 
 def load_experiment_context(experiment_path, require_runpod: false)
   exp = LocalModelEvaluation::Experiment.new(experiment_path)
-  managed = LocalModelEvaluation::RunpodReady.applicable?(exp)
+  managed = LocalModelEvaluation::RpofReadiness.applicable?(exp)
   workers = load_workers(require_runpod: require_runpod && managed)
   models = load_models
   scheduler = LocalModelEvaluation::Scheduler.new(experiment: exp, workers:, models:)
@@ -152,21 +152,7 @@ ensure
 end
 
 def build_runpod_readiness(experiment, workers, models)
-  namespace = runpod_namespace
-  fleet_state = LocalModelEvaluation::RunpodFleetState.new(
-    root: namespace.state_root,
-    local_port_base: namespace.local_port_base
-  )
-  client = ENV["RUNPOD_API_KEY"].to_s.empty? ? nil : runpod_client
-  gate = LocalModelEvaluation::RunpodReady.new(
-    fleet_state:,
-    client:,
-    tunnels: LocalModelEvaluation::RunpodTunnels.new(
-      fleet_state:,
-      repo_root: ROOT
-    ),
-    worker_check: LocalModelEvaluation::WorkerCheck.new
-  )
+  gate = LocalModelEvaluation::RpofReadiness.new(repo_root: ROOT)
   [gate, gate.check(experiment:, workers:, models:)]
 end
 
@@ -262,6 +248,26 @@ rescue LocalModelEvaluation::RunpodFleetNamespace::Error => e
   exit 2
 end
 
+rpof_compat = {
+  "runpod-create" => "create",
+  "runpod-destroy" => "destroy",
+  "runpod-tunnels" => "tunnels",
+  "runpod-status" => "status",
+  "runpod-lease" => "lease",
+  "runpod-scale" => "scale",
+  "runpod-replace" => "replace",
+  "runpod-bootstrap" => "bootstrap",
+  "runpod-dispatch" => "dispatch-legacy"
+}
+if (rpof_command = rpof_compat[command])
+  exec(
+    RbConfig.ruby,
+    File.join(ROOT, "bin", "lme-rpof"),
+    rpof_command,
+    *ARGV
+  )
+end
+
 case command
 when "plan"
   experiment_path = ARGV.shift or abort "Usage: bin/lme plan EXPERIMENT.yml"
@@ -318,8 +324,8 @@ when "worker-check"
 when "runpod-ready"
   experiment_path = ARGV.shift or abort "Usage: bin/lme runpod-ready EXPERIMENT.yml [--fleet KEY]"
   abort "Usage: bin/lme runpod-ready EXPERIMENT.yml [--fleet KEY]" unless ARGV.empty?
-  exp, workers, models, _jobs = load_experiment_context(experiment_path, require_runpod: true)
-  unless LocalModelEvaluation::RunpodReady.applicable?(exp)
+  exp, workers, models, _jobs = load_experiment_context(experiment_path, require_runpod: false)
+  unless LocalModelEvaluation::RpofReadiness.applicable?(exp)
     puts "RunPod readiness: NOT APPLICABLE -- experiment has no managed burst_N workers."
     exit 0
   end
@@ -585,7 +591,7 @@ when "run"
   opts = parse_run_options(ARGV)
 
   exp, workers, models, jobs = load_experiment_context(experiment_path, require_runpod: true)
-  if LocalModelEvaluation::RunpodReady.applicable?(exp)
+  if LocalModelEvaluation::RpofReadiness.applicable?(exp)
     gate, readiness = build_runpod_readiness(exp, workers, models)
     puts gate.render(readiness)
     unless readiness.fetch("ready")
