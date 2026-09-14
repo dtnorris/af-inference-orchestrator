@@ -1,0 +1,14 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+root = File.expand_path("..", __dir__)
+executable = ENV["RPOF_EXECUTABLE"].to_s.strip
+executable = File.expand_path("../runpod-ollama-fleet/bin/rpof", root) if executable.empty?
+
+unless File.file?(executable) && File.executable?(executable)
+  warn "ERROR: RPOF executable not found or not executable: #{executable}"
+  warn "Set RPOF_EXECUTABLE=/absolute/path/to/runpod-ollama-fleet/bin/rpof."
+  exit 2
+end
+
+exec executable, *ARGV
