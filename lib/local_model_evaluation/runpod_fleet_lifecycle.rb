@@ -294,9 +294,8 @@ module LocalModelEvaluation
       if expected_fleet_id && fleet.fetch("fleet_id") != expected_fleet_id
         raise Error, "current fleet changed from #{expected_fleet_id} to #{fleet.fetch('fleet_id')}; run preflight again"
       end
-      unless fleet.dig("gpu", "id").to_s == RunpodFleet::GPU_ID
-        raise Error, "current fleet GPU #{fleet.dig('gpu', 'id').inspect} does not match configured #{RunpodFleet::GPU_ID}"
-      end
+      @fleet_gpu_id = fleet.dig("gpu", "id").to_s.strip
+      raise Error, "current fleet does not record an exact GPU id" if @fleet_gpu_id.empty?
       unless fleet.fetch("image").to_s == RunpodFleet::IMAGE
         raise Error, "current fleet image does not match configured RunPod image"
       end
@@ -304,6 +303,20 @@ module LocalModelEvaluation
       fleet
     rescue RunpodFleetState::Error, KeyError, ArgumentError, TypeError => e
       raise Error, e.message
+    end
+
+    def fleet_gpu_id!(fleet)
+      gpu_id = fleet.dig("gpu", "id").to_s.strip
+      raise Error, "current fleet does not record an exact GPU id" if gpu_id.empty?
+
+      gpu_id
+    end
+
+    def current_gpu_id!
+      gpu_id = @fleet_gpu_id.to_s.strip
+      raise Error, "current fleet does not record an exact GPU id" if gpu_id.empty?
+
+      gpu_id
     end
 
     def provisioning_profile!(fleet)
@@ -320,18 +333,18 @@ module LocalModelEvaluation
 
     def capacity!(fleet, count:)
       cloud = normalize_cloud(fleet.fetch("cloud"))
-      gpu = @client.list_gpu_types(cloud:, count:).find { |candidate| candidate["id"] == RunpodFleet::GPU_ID }
-      raise Error, "RunPod catalog did not return #{RunpodFleet::GPU_ID}" unless gpu
+      gpu = @client.list_gpu_types(cloud:, count:).find { |candidate| candidate["id"] == fleet_gpu_id!(fleet) }
+      raise Error, "RunPod catalog did not return #{fleet_gpu_id!(fleet)}" unless gpu
       if gpu["memory"].to_i < RunpodFleet::GPU_MEMORY_GB
-        raise Error, "#{RunpodFleet::GPU_ID} reports only #{gpu['memory']} GB VRAM; #{RunpodFleet::GPU_MEMORY_GB} GB is required"
+        raise Error, "#{fleet_gpu_id!(fleet)} reports only #{gpu['memory']} GB VRAM; #{RunpodFleet::GPU_MEMORY_GB} GB is required"
       end
-      raise Error, "#{RunpodFleet::GPU_ID} is not available on #{cloud} cloud" unless gpu[cloud.downcase] == true
+      raise Error, "#{fleet_gpu_id!(fleet)} is not available on #{cloud} cloud" unless gpu[cloud.downcase] == true
 
       availability = gpu["availability"].to_s
       if availability.empty? || availability == "NONE"
-        raise Error, "#{RunpodFleet::GPU_ID} #{cloud} availability is #{availability.empty? ? 'unknown' : availability}"
+        raise Error, "#{fleet_gpu_id!(fleet)} #{cloud} availability is #{availability.empty? ? 'unknown' : availability}"
       end
-      rate = positive_float(gpu.dig("price", cloud.downcase), "#{RunpodFleet::GPU_ID} #{cloud} hourly rate")
+      rate = positive_float(gpu.dig("price", cloud.downcase), "#{fleet_gpu_id!(fleet)} #{cloud} hourly rate")
       [gpu, availability, rate]
     end
 
@@ -388,7 +401,7 @@ module LocalModelEvaluation
           }
         },
         "cloud" => cloud,
-        "gpu" => { "id" => RunpodFleet::GPU_ID, "count" => 1 }
+        "gpu" => { "id" => current_gpu_id!, "count" => 1 }
       }
     end
 
@@ -442,8 +455,8 @@ module LocalModelEvaluation
       raise Error, "pod #{pod_id} name mismatch: expected #{expected_name.inspect}, got #{pod['name'].inspect}" unless pod["name"] == expected_name
       raise Error, "#{expected_name} cloud mismatch: expected #{cloud}, got #{pod['cloud'].inspect}" unless pod["cloud"] == cloud
       gpu = pod["gpu"] || {}
-      unless gpu["id"] == RunpodFleet::GPU_ID && gpu["count"].to_i == 1
-        raise Error, "#{expected_name} GPU mismatch: expected 1x #{RunpodFleet::GPU_ID}, got #{gpu.inspect}"
+      unless gpu["id"] == current_gpu_id! && gpu["count"].to_i == 1
+        raise Error, "#{expected_name} GPU mismatch: expected 1x #{current_gpu_id!}, got #{gpu.inspect}"
       end
     end
 

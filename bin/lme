@@ -208,6 +208,7 @@ def runpod_create_options(argv)
   opts = {
     workers: nil,
     cloud: LocalModelEvaluation::RunpodFleet::DEFAULT_CLOUD,
+    gpu_id: LocalModelEvaluation::RunpodFleet::GPU_ID,
     container_disk_gb: LocalModelEvaluation::RunpodFleet::DEFAULT_CONTAINER_DISK_GB,
     volume_gb: LocalModelEvaluation::RunpodFleet::DEFAULT_VOLUME_GB,
     max_runtime_seconds: nil,
@@ -222,7 +223,8 @@ def runpod_create_options(argv)
   }
   OptionParser.new do |o|
     o.on("--workers N", Integer, "Number of burst workers (1-16)") { |v| opts[:workers] = v }
-    o.on("--cloud TIER", "RunPod cloud tier: COMMUNITY or SECURE (default: COMMUNITY)") { |v| opts[:cloud] = v }
+    o.on("--cloud TIER", "RunPod cloud tier: COMMUNITY or SECURE (default: SECURE)") { |v| opts[:cloud] = v }
+    o.on("--gpu GPU_ID", "Exact RunPod GPU type id (default: #{LocalModelEvaluation::RunpodFleet::GPU_ID})") { |v| opts[:gpu_id] = v }
     o.on("--container-disk-gb N", Integer, "Container/root disk size in GB") { |v| opts[:container_disk_gb] = v }
     o.on("--volume-gb N", Integer, "Persistent /workspace volume size in GB") { |v| opts[:volume_gb] = v }
     o.on("--max-runtime-minutes MINUTES", Float, "Destroy the fleet after this many minutes") { |v| opts[:max_runtime_seconds] = v * 60.0 }
@@ -356,6 +358,7 @@ when "runpod-create"
   begin
     namespace = runpod_namespace(fleet_key, provisional: true)
     fleet = runpod_fleet(namespace:)
+    fleet.gpu_id = opts[:gpu_id]
     preflight = fleet.preflight(
       worker_count: opts[:workers],
       cloud: opts[:cloud],
@@ -429,6 +432,7 @@ when "runpod-create"
 
     namespace = runpod_namespace(fleet_key, create: true)
     fleet = runpod_fleet(namespace:)
+    fleet.gpu_id = opts[:gpu_id]
     workers = fleet.create(
       worker_count: opts[:workers],
       cloud: opts[:cloud],
@@ -616,7 +620,7 @@ else
       bin/lme runpod-tunnels [start|status|stop] [--workers 1-16|--all] [--fleet KEY]
       bin/lme runpod-bootstrap --workers 1-16 --model MODEL [options] [--fleet KEY]
       bin/lme runpod-dispatch --jobs FILE (--workers LIST|--all) --output DIR [--group-by-affinity] [--fleet KEY]
-      bin/lme runpod-create --workers N [--fleet KEY] [--cloud COMMUNITY|SECURE] [--container-disk-gb N] [--volume-gb N] [--max-runtime-minutes MINUTES] [--max-spend-usd USD] [--dry-run|--yes] [--max-hourly-usd USD] [--max-total-hourly-usd USD]
+      bin/lme runpod-create --workers N [--fleet KEY] [--cloud COMMUNITY|SECURE] [--gpu GPU_ID] [--container-disk-gb N] [--volume-gb N] [--max-runtime-minutes MINUTES] [--max-spend-usd USD] [--dry-run|--yes] [--max-hourly-usd USD] [--max-total-hourly-usd USD]
       bin/lme runpod-destroy (--workers 1-16|--all) [--fleet KEY] [--yes]
       bin/lme start EXPERIMENT.yml [--fleet KEY] [--rerun-failed|--force]
       bin/lme status EXPERIMENT.yml [--fleet KEY]

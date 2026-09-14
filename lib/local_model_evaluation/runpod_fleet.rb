@@ -136,6 +136,17 @@ module LocalModelEvaluation
 
     attr_reader :env_file, :fleet_state, :fleet_key
 
+    def gpu_id
+      @gpu_id || GPU_ID
+    end
+
+    def gpu_id=(value)
+      selected = value.to_s.strip
+      raise Error, "GPU id must not be empty" if selected.empty?
+
+      @gpu_id = selected
+    end
+
     def preflight(worker_count:, cloud: DEFAULT_CLOUD, max_fleet_hourly_usd: DEFAULT_MAX_FLEET_HOURLY_USD,
                   container_disk_gb: DEFAULT_CONTAINER_DISK_GB, volume_gb: DEFAULT_VOLUME_GB,
                   max_runtime_seconds: nil, max_spend_usd: nil)
@@ -154,15 +165,15 @@ module LocalModelEvaluation
         raise Error, "refusing to create duplicate managed pods: #{names}; destroy the existing fleet first"
       end
 
-      gpu = @client.list_gpu_types(cloud:, count: worker_count).find { |candidate| candidate["id"] == GPU_ID }
-      raise Error, "RunPod catalog did not return #{GPU_ID}" unless gpu
-      raise Error, "#{GPU_ID} reports only #{gpu['memory']} GB VRAM; #{GPU_MEMORY_GB} GB is required" if gpu["memory"].to_i < GPU_MEMORY_GB
-      raise Error, "#{GPU_ID} is not available on #{cloud} cloud" unless gpu[cloud.downcase] == true
+      gpu = @client.list_gpu_types(cloud:, count: worker_count).find { |candidate| candidate["id"] == gpu_id }
+      raise Error, "RunPod catalog did not return #{gpu_id}" unless gpu
+      raise Error, "#{gpu_id} reports only #{gpu['memory']} GB VRAM; #{GPU_MEMORY_GB} GB is required" if gpu["memory"].to_i < GPU_MEMORY_GB
+      raise Error, "#{gpu_id} is not available on #{cloud} cloud" unless gpu[cloud.downcase] == true
 
       availability = gpu["availability"].to_s
-      raise Error, "#{GPU_ID} #{cloud} availability is #{availability.empty? ? 'unknown' : availability}" if availability.empty? || availability == "NONE"
+      raise Error, "#{gpu_id} #{cloud} availability is #{availability.empty? ? 'unknown' : availability}" if availability.empty? || availability == "NONE"
 
-      rate = positive_float(gpu.dig("price", cloud.downcase), "#{GPU_ID} #{cloud} hourly rate")
+      rate = positive_float(gpu.dig("price", cloud.downcase), "#{gpu_id} #{cloud} hourly rate")
       fleet_rate = rate * worker_count
       if fleet_rate > max_fleet_hourly_usd
         raise Error, format(
@@ -223,6 +234,9 @@ module LocalModelEvaluation
       end
       if preflight.cloud != cloud
         raise Error, "preflight cloud #{preflight.cloud} does not match requested cloud #{cloud}"
+      end
+      if preflight.gpu.fetch("id").to_s != gpu_id
+        raise Error, "preflight GPU #{preflight.gpu.fetch('id').inspect} does not match selected GPU #{gpu_id.inspect}"
       end
       if preflight.container_disk_gb != container_disk_gb
         raise Error,
@@ -289,7 +303,7 @@ module LocalModelEvaluation
           @fleet_state.activate(
             workers:,
             cloud:,
-            gpu_id: GPU_ID,
+            gpu_id: gpu_id,
             image: IMAGE,
             lease:,
             provisioning: {
@@ -386,7 +400,7 @@ module LocalModelEvaluation
         },
         "cloud" => cloud,
         "gpu" => {
-          "id" => GPU_ID,
+          "id" => gpu_id,
           "count" => 1
         }
       }
@@ -446,8 +460,8 @@ module LocalModelEvaluation
       raise Error, "#{expected_name} cloud mismatch: expected #{cloud}, got #{pod['cloud'].inspect}" unless pod["cloud"] == cloud
 
       gpu = pod["gpu"] || {}
-      unless gpu["id"] == GPU_ID && gpu["count"].to_i == 1
-        raise Error, "#{expected_name} GPU mismatch: expected 1x #{GPU_ID}, got #{gpu.inspect}"
+      unless gpu["id"] == gpu_id && gpu["count"].to_i == 1
+        raise Error, "#{expected_name} GPU mismatch: expected 1x #{gpu_id}, got #{gpu.inspect}"
       end
     end
 

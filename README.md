@@ -118,6 +118,22 @@ Shared RunPod fleet commands support 1–16 workers. Explicit subsets remain ava
 with selectors such as `1-12`, `9-12`, or `1,6,12`; `--all` selects the active
 workers recorded in the current fleet state.
 
+GPU selection is first-class at fleet creation. For example, an A6000 qualification
+dry-run can request the exact RunPod GPU type explicitly:
+
+```bash
+bin/lme runpod-create \
+  --workers 1 \
+  --cloud SECURE \
+  --gpu "NVIDIA RTX A6000" \
+  --dry-run
+```
+
+`--gpu` is an exact GPU type id, not a fallback family. The selected GPU is
+persisted in fleet state; later `runpod-scale` and `runpod-replace` operations
+reuse and validate that recorded GPU. `RUNPOD_GPU_ID` remains the default when
+`--gpu` is omitted.
+
 RunPod pod storage remains backward-compatible at 30 GB for the container/root
 disk and 60 GB for the persistent `/workspace` volume. Size either explicitly
 when a worker must retain a larger multi-model Ollama store:
