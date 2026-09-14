@@ -291,7 +291,11 @@ module LocalModelEvaluation
             cloud:,
             gpu_id: GPU_ID,
             image: IMAGE,
-            lease:
+            lease:,
+            provisioning: {
+              "container_disk_gb" => container_disk_gb,
+              "volume_gb" => volume_gb
+            }
           )
         end
         write_worker_env(workers, fleet_record:)

@@ -57,30 +57,23 @@ module LocalModelEvaluation
       clear_current(record.fetch("fleet_id"))
     end
 
-    def activate(workers:, cloud:, gpu_id:, image:, lease: nil)
+    def activate(workers:, cloud:, gpu_id:, image:, lease: nil, provisioning: nil)
       assert_no_active!
 
       workers = Array(workers).sort_by(&:index)
       raise Error, "cannot activate an empty RunPod fleet" if workers.empty?
       validate_worker_indices!(workers.map(&:index))
       lease = normalize_lease(lease)
+      provisioning = normalize_provisioning(provisioning)
 
       timestamp = utc_now
       fleet_id = build_fleet_id(timestamp, workers.first.pod_id)
       dir = fleet_dir(fleet_id)
       raise Error, "fleet state directory already exists: #{dir}" if File.exist?(dir)
 
+      worker_started_at = lease ? Time.parse(lease.fetch("started_at_utc")).utc : timestamp
       worker_records = workers.map do |worker|
-        {
-          "index" => worker.index,
-          "name" => worker.name,
-          "pod_id" => worker.pod_id,
-          "host" => worker.host,
-          "ssh_port" => worker.ssh_port,
-          "hourly_rate_usd" => worker.hourly_rate,
-          "local_ollama_url" => "http://127.0.0.1:#{@local_port_base + worker.index - 1}",
-          "status" => "active"
-        }
+        worker_record(worker, created_at: worker_started_at, generation: 1)
       end
 
       record = {
@@ -105,6 +98,7 @@ module LocalModelEvaluation
         }
       }
       record["lease"] = lease if lease
+      record["provisioning"] = provisioning if provisioning
 
       begin
         ARTIFACT_DIRS.each { |name| FileUtils.mkdir_p(File.join(dir, name)) }
@@ -116,6 +110,116 @@ module LocalModelEvaluation
       end
 
       record
+    end
+
+    def add_workers(workers:, created_at_utc_by_index:)
+      record = active_record!
+      workers = Array(workers).sort_by(&:index)
+      raise Error, "cannot add an empty worker set" if workers.empty?
+      existing_count = Integer(record.fetch("worker_count"))
+      expected_indices = ((existing_count + 1)..(existing_count + workers.length)).to_a
+      actual_indices = workers.map { |worker| Integer(worker.index) }
+      unless actual_indices == expected_indices
+        raise Error, "scaled workers must extend contiguous slots #{expected_indices.join(', ')}"
+      end
+
+      created_at_utc_by_index = created_at_utc_by_index.transform_keys { |key| Integer(key) }
+      worker_records = workers.map do |worker|
+        started_at = parse_time(created_at_utc_by_index.fetch(Integer(worker.index)), "burst_#{worker.index} created_at_utc")
+        worker_record(worker, created_at: started_at, generation: 1)
+      end
+      record.fetch("workers").concat(worker_records)
+      record["workers"].sort_by! { |worker| Integer(worker.fetch("index")) }
+      refresh_fleet_totals!(record)
+      write_record(record)
+      record
+    rescue KeyError, ArgumentError, TypeError => e
+      raise Error, "could not add workers: #{e.message}"
+    end
+
+    def begin_replacement(index)
+      record = active_record!
+      worker = fetch_worker!(record, index)
+      return record if worker["status"] == "replacing"
+      unless %w[active destroyed].include?(worker["status"].to_s)
+        raise Error, "burst_#{index} cannot enter replacement from state #{worker['status'].inspect}"
+      end
+
+      worker["replacement_previous_status"] = worker.fetch("status")
+      worker["status"] = "replacing"
+      worker["replacement_started_at_utc"] = utc_now.iso8601
+      refresh_fleet_totals!(record)
+      write_record(record)
+      record
+    end
+
+    def cancel_replacement(index)
+      record = active_record!
+      worker = fetch_worker!(record, index)
+      return record unless worker["status"] == "replacing"
+
+      previous = worker.delete("replacement_previous_status") || "active"
+      worker.delete("replacement_started_at_utc")
+      worker["status"] = previous
+      refresh_fleet_totals!(record)
+      write_record(record)
+      record
+    end
+
+    def mark_replacement_destroyed(index)
+      record = active_record!
+      worker = fetch_worker!(record, index)
+      unless worker["status"] == "replacing"
+        raise Error, "burst_#{index} is not in replacement state"
+      end
+
+      worker["status"] = "destroyed"
+      worker["destroyed_at_utc"] ||= utc_now.iso8601
+      worker["replacement_pending"] = true
+      worker.delete("replacement_previous_status")
+      worker.delete("replacement_started_at_utc")
+      refresh_fleet_totals!(record)
+      write_record(record)
+      record
+    end
+
+    def complete_replacement(worker:, created_at_utc:)
+      record = active_record!
+      index = Integer(worker.index)
+      old = fetch_worker!(record, index)
+      unless old["status"] == "destroyed" && old["replacement_pending"]
+        raise Error, "burst_#{index} is not waiting for a replacement"
+      end
+
+      stopped_at = parse_time(old.fetch("destroyed_at_utc"), "burst_#{index} destroyed_at_utc")
+      started_at = worker_started_at(old, record)
+      accrued_offset = Float(old.fetch("accrued_cost_offset_usd", 0.0)) +
+                       (Float(old.fetch("hourly_rate_usd")) * nonnegative_seconds(started_at, stopped_at) / 3600.0)
+      lease_offset = Float(old.fetch("lease_spend_offset_usd", 0.0))
+      if record["lease"]
+        lease_started_at = parse_time(record.dig("lease", "started_at_utc"), "lease started_at_utc")
+        lease_worker_start = [started_at, lease_started_at].max
+        lease_offset += Float(old.fetch("hourly_rate_usd")) * nonnegative_seconds(lease_worker_start, stopped_at) / 3600.0
+      end
+
+      history = Array(old["history"]).map(&:dup)
+      history << historical_worker(old)
+      replacement = worker_record(
+        worker,
+        created_at: parse_time(created_at_utc, "burst_#{index} replacement created_at_utc"),
+        generation: Integer(old.fetch("generation", 1)) + 1
+      )
+      replacement["history"] = history
+      replacement["accrued_cost_offset_usd"] = accrued_offset.round(6)
+      replacement["lease_spend_offset_usd"] = lease_offset.round(6) if record["lease"]
+
+      workers = record.fetch("workers")
+      workers[workers.index(old)] = replacement
+      refresh_fleet_totals!(record)
+      write_record(record)
+      record
+    rescue ArgumentError, TypeError => e
+      raise Error, "could not complete replacement: #{e.message}"
     end
 
     def mark_destroyed(indices)
@@ -133,6 +237,7 @@ module LocalModelEvaluation
         worker["status"] = "destroyed"
         worker["destroyed_at_utc"] ||= timestamp
       end
+      refresh_fleet_totals!(record)
 
       if record.fetch("workers").all? { |worker| worker["status"] == "destroyed" }
         record["status"] = "destroyed"
@@ -233,6 +338,87 @@ module LocalModelEvaluation
       raise Error, "invalid fleet id: #{fleet_id.inspect}"
     end
 
+    def active_record!
+      record = current
+      raise Error, "no current RunPod fleet state exists; provision a fleet first" unless record
+      raise Error, "current RunPod fleet #{record.fetch('fleet_id')} is not active" unless record["status"] == "active"
+      record
+    end
+
+    def fetch_worker!(record, index)
+      index = RunpodWorkers.validate_index(index)
+      worker = record.fetch("workers").find { |candidate| Integer(candidate.fetch("index")) == index }
+      raise Error, "current fleet does not contain burst_#{index}" unless worker
+      worker
+    rescue RunpodWorkers::Error => e
+      raise Error, e.message
+    end
+
+    def worker_record(worker, created_at:, generation:)
+      {
+        "index" => Integer(worker.index),
+        "name" => worker.name,
+        "pod_id" => worker.pod_id,
+        "host" => worker.host,
+        "ssh_port" => Integer(worker.ssh_port),
+        "hourly_rate_usd" => Float(worker.hourly_rate),
+        "local_ollama_url" => "http://127.0.0.1:#{@local_port_base + Integer(worker.index) - 1}",
+        "status" => "active",
+        "generation" => Integer(generation),
+        "created_at_utc" => created_at.utc.iso8601
+      }
+    end
+
+    def historical_worker(worker)
+      %w[generation name pod_id host ssh_port hourly_rate_usd created_at_utc destroyed_at_utc].each_with_object({}) do |key, out|
+        out[key] = worker[key] if worker.key?(key)
+      end
+    end
+
+    def worker_started_at(worker, record)
+      value = worker["created_at_utc"] || record.fetch("created_at_utc")
+      parse_time(value, "burst_#{worker.fetch('index')} created_at_utc")
+    end
+
+    def refresh_fleet_totals!(record)
+      workers = record.fetch("workers")
+      record["worker_count"] = workers.length
+      record["fleet_hourly_rate_usd"] = workers.sum do |worker|
+        worker["status"] == "active" ? Float(worker.fetch("hourly_rate_usd")) : 0.0
+      end
+    end
+
+    def normalize_provisioning(value)
+      return nil if value.nil?
+      raise Error, "provisioning metadata must be a hash" unless value.is_a?(Hash)
+      data = value.transform_keys(&:to_s)
+      {
+        "container_disk_gb" => positive_integer(data.fetch("container_disk_gb"), "provisioning container_disk_gb"),
+        "volume_gb" => positive_integer(data.fetch("volume_gb"), "provisioning volume_gb")
+      }
+    rescue KeyError => e
+      raise Error, "invalid provisioning metadata: #{e.message}"
+    end
+
+    def positive_integer(value, label)
+      number = Integer(value)
+      raise Error, "#{label} must be a positive integer" unless number.positive?
+      number
+    rescue ArgumentError, TypeError
+      raise Error, "#{label} must be a positive integer"
+    end
+
+    def parse_time(value, label)
+      time = value.is_a?(Time) ? value : Time.parse(value.to_s)
+      time.utc
+    rescue ArgumentError
+      raise Error, "#{label} is invalid: #{value.inspect}"
+    end
+
+    def nonnegative_seconds(start_time, end_time)
+      [end_time - start_time, 0.0].max
+    end
+
     def normalize_lease(value)
       return nil if value.nil?
       raise Error, "lease must be a hash" unless value.is_a?(Hash)
@@ -274,7 +460,16 @@ module LocalModelEvaluation
         raise Error, "fleet worker_count #{expected_count} does not match #{workers.length} worker records"
       end
       normalize_lease(record["lease"]) if record["lease"]
-    rescue KeyError, RunpodWorkers::Error => e
+      normalize_provisioning(record["provisioning"]) if record["provisioning"]
+      workers.each do |worker|
+        Integer(worker.fetch("generation", 1))
+        parse_time(worker["created_at_utc"], "worker created_at_utc") if worker["created_at_utc"]
+        Array(worker["history"]).each do |prior|
+          Integer(prior.fetch("generation", 1))
+          prior.fetch("pod_id")
+        end
+      end
+    rescue KeyError, ArgumentError, TypeError, RunpodWorkers::Error => e
       raise Error, "invalid fleet state: #{e.message}"
     end
 

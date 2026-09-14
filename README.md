@@ -166,6 +166,29 @@ the watchdog cannot delete pods until it is running and connected again. The
 spend lease uses recorded GPU rates and intentionally does not claim to cap
 storage, network, taxes, credits, provider billing granularity, or other charges.
 
+Active fleets can grow without recreating existing workers, and an individual
+logical slot can be replaced without changing its `burst_N` identity:
+
+```bash
+bin/lme runpod-scale --workers 8 --fleet scoring-a6000 --dry-run
+bin/lme runpod-replace --worker 7 --fleet scoring-a6000 --dry-run
+```
+
+`runpod-scale` interprets `--workers N` as the target logical fleet size and only
+creates the new contiguous slots above the current size. `runpod-replace` deletes
+the recorded physical pod for one slot before creating its replacement, so it
+does not intentionally overlap two paid pods for that slot. Both operations use
+the fleet's recorded cloud, GPU, image, container-disk, and `/workspace` volume
+contract and retain the existing hourly and aggregate cost caps. Fleets created
+before provisioning metadata was recorded fail closed rather than guessing their
+storage profile; recreate those fleets once before using scale/replace.
+
+A replacement preserves the logical local endpoint and records the prior physical
+pod as generation history in fleet state. A failed replacement leaves the slot
+explicitly destroyed/retryable rather than pretending it is healthy. New and
+replacement workers still need the normal bootstrap and tunnel readiness steps;
+model-cache reuse is a separate capability.
+
 The generic dispatcher accepts independent jobs as structured JSON:
 
 ```json

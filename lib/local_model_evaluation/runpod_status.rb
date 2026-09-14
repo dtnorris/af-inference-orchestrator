@@ -101,8 +101,8 @@ module LocalModelEvaluation
       append_bootstrap(lines, snapshot["bootstrap"])
       append_provider_warnings(lines, snapshot)
       lines << ""
-      lines << "Billing estimate begins at LME fleet activation after RunPod SSH readiness and uses recorded worker rates."
-      lines << "It can understate provider billing by provisioning time and can differ because of provider billing granularity, credits, or rate changes."
+      lines << "Billing estimate uses per-worker lifecycle timestamps when available; legacy fleets fall back to LME fleet activation."
+      lines << "It remains an estimate and can differ because of provider billing granularity, storage/network charges, credits, or rate changes."
       if snapshot["lease"]
         lines << "Lease spend is a conservative guard estimate that starts before the first paid pod create and uses recorded worker rates."
         lines << "Lease enforcement is a local watchdog, not a provider-side billing cap; it cannot enforce limits while the control-plane Mac is offline."
@@ -120,8 +120,14 @@ module LocalModelEvaluation
                    else
                      now
                    end
-      elapsed = nonnegative_seconds(fleet_created_at, stopped_at)
+      started_at = if worker["created_at_utc"]
+                     parse_time(worker["created_at_utc"], "burst_#{worker.fetch('index')} created_at_utc")
+                   else
+                     fleet_created_at
+                   end
+      elapsed = nonnegative_seconds(started_at, stopped_at)
       rate = Float(worker.fetch("hourly_rate_usd"))
+      offset = Float(worker.fetch("accrued_cost_offset_usd", 0.0))
       provider = provider_snapshot(worker)
 
       {
@@ -133,7 +139,7 @@ module LocalModelEvaluation
         "provider_hourly_rate_usd" => provider["hourly_rate_usd"],
         "hourly_rate_usd" => rate,
         "tracked_elapsed_seconds" => elapsed,
-        "estimated_cost_usd" => (rate * elapsed / 3600.0).round(6)
+        "estimated_cost_usd" => (offset + (rate * elapsed / 3600.0)).round(6)
       }
     end
 

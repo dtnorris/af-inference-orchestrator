@@ -338,6 +338,12 @@ when "runpod-status"
 when "runpod-lease"
   exec RbConfig.ruby, File.join(ROOT, "bin", "lme-runpod-lease"), *ARGV
 
+when "runpod-scale"
+  exec RbConfig.ruby, File.join(ROOT, "bin", "lme-runpod-lifecycle"), "scale", *ARGV
+
+when "runpod-replace"
+  exec RbConfig.ruby, File.join(ROOT, "bin", "lme-runpod-lifecycle"), "replace", *ARGV
+
 when "runpod-bootstrap"
   exec RbConfig.ruby, File.join(ROOT, "bin", "lme-runpod-bootstrap"), *ARGV
 
@@ -605,6 +611,8 @@ else
       bin/lme runpod-ready EXPERIMENT.yml [--fleet KEY]
       bin/lme runpod-status [--fleet KEY]
       bin/lme runpod-lease [status|watch] [--fleet KEY] [--expected-fleet-id ID] [--poll-seconds N]
+      bin/lme runpod-scale --workers N [--fleet KEY] [--dry-run|--yes] [--max-hourly-usd USD] [--max-total-hourly-usd USD]
+      bin/lme runpod-replace --worker N [--fleet KEY] [--dry-run|--yes] [--max-hourly-usd USD] [--max-total-hourly-usd USD]
       bin/lme runpod-tunnels [start|status|stop] [--workers 1-16|--all] [--fleet KEY]
       bin/lme runpod-bootstrap --workers 1-16 --model MODEL [options] [--fleet KEY]
       bin/lme runpod-dispatch --jobs FILE (--workers LIST|--all) --output DIR [--group-by-affinity] [--fleet KEY]

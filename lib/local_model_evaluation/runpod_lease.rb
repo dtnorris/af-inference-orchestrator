@@ -29,8 +29,11 @@ module LocalModelEvaluation
                       else
                         now
                       end
-        worker_elapsed = [worker_stop - started_at, 0.0].max
-        Float(worker.fetch("hourly_rate_usd")) * worker_elapsed / 3600.0
+        worker_start = worker["created_at_utc"] ? parse_time(worker["created_at_utc"], "worker created_at_utc") : started_at
+        worker_start = [worker_start, started_at].max
+        worker_elapsed = [worker_stop - worker_start, 0.0].max
+        offset = Float(worker.fetch("lease_spend_offset_usd", 0.0))
+        offset + (Float(worker.fetch("hourly_rate_usd")) * worker_elapsed / 3600.0)
       end
 
       runtime_remaining_seconds = max_runtime_seconds && [max_runtime_seconds - elapsed_seconds, 0.0].max
