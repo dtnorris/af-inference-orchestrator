@@ -271,6 +271,47 @@ module LocalModelEvaluation
       end
     end
 
+    def repair(worker_indices:, wait_seconds: DEFAULT_WAIT_SECONDS, poll_seconds: DEFAULT_POLL_SECONDS,
+               remote_port: DEFAULT_REMOTE_PORT)
+      wait_seconds = nonnegative_float(wait_seconds, "wait seconds")
+      poll_seconds = positive_float(poll_seconds, "poll seconds")
+      remote_port = positive_integer(remote_port, "remote port")
+
+      rows = status(worker_indices:)
+      mismatches = rows.select { |row| row.fetch("process_status") == "mismatch" }
+      unless mismatches.empty?
+        names = mismatches.map { |row| "burst_#{row.fetch('index')}" }.join(", ")
+        raise Error, "refusing tunnel repair for #{names}: managed pid identity does not match recorded SSH tunnel"
+      end
+
+      targets = rows.reject do |row|
+        row.fetch("process_status") == "running" && row.fetch("health_status") == "healthy"
+      end
+      if targets.empty?
+        @out.puts "Tunnel repair complete: #{rows.length}/#{rows.length} selected workers already healthy; no processes restarted."
+        return rows
+      end
+
+      # Validate restart prerequisites before deliberately stopping any managed tunnel.
+      validate_identity!
+      target_indices = targets.map { |row| row.fetch("index") }
+      @out.puts "Repairing tunnel(s): #{target_indices.map { |index| "burst_#{index}" }.join(', ')}"
+      stop(worker_indices: target_indices)
+      start(
+        worker_indices: target_indices,
+        wait_seconds:,
+        poll_seconds:,
+        remote_port:
+      )
+
+      repaired = status(worker_indices:)
+      healthy = repaired.count do |row|
+        row.fetch("process_status") == "running" && row.fetch("health_status") == "healthy"
+      end
+      @out.puts "Tunnel repair complete: #{healthy}/#{repaired.length} selected workers healthy."
+      repaired
+    end
+
     def status(worker_indices: nil)
       fleet = active_fleet!
       workers = selected_workers(fleet, worker_indices, default_all: true)

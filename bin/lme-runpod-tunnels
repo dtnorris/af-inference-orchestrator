@@ -17,7 +17,7 @@ rescue LocalModelEvaluation::RunpodWorkers::Error => e
   raise OptionParser::InvalidArgument, e.message
 end
 
-action = %w[start status stop].include?(ARGV.first) ? ARGV.shift : "start"
+action = %w[start status repair stop].include?(ARGV.first) ? ARGV.shift : "start"
 opts = {
   workers: nil,
   all: false,
@@ -32,6 +32,7 @@ parser = OptionParser.new do |o|
       bin/lme runpod-tunnels --workers 1-16
       bin/lme runpod-tunnels start --workers 1-16
       bin/lme runpod-tunnels status [--workers 1-16]
+      bin/lme runpod-tunnels repair --workers 1-16
       bin/lme runpod-tunnels stop --workers 1-16
   USAGE
   o.on("--workers LIST", "Burst worker indices, e.g. 1-12 or 1,6,12") { |v| opts[:workers] = parse_worker_indices(v) }
@@ -77,7 +78,7 @@ if opts[:all]
   end
 end
 
-if %w[start stop].include?(action) && !opts[:workers]
+if %w[start repair stop].include?(action) && !opts[:workers]
   warn "ERROR: #{action} requires --workers LIST or --all"
   warn parser
   exit 2
@@ -102,6 +103,13 @@ begin
     puts manager.render_status(rows)
     unhealthy = rows.any? { |row| row["process_status"] != "running" || row["health_status"] != "healthy" }
     exit(unhealthy ? 1 : 0)
+  when "repair"
+    rows = manager.repair(
+      worker_indices: opts[:workers],
+      wait_seconds: opts[:wait_seconds],
+      remote_port: opts[:remote_port]
+    )
+    puts manager.render_status(rows)
   when "stop"
     manager.stop(worker_indices: opts[:workers])
   end

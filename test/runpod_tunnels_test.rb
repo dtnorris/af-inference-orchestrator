@@ -54,6 +54,7 @@ class RunpodTunnelsTest < Minitest::Test
     end
     def check(endpoint)
       value = @results.fetch(endpoint, true)
+      value = value.call if value.respond_to?(:call)
       if value == true
         LocalModelEvaluation::RunpodTunnels::Health.new(healthy: true, version: "0.33.2")
       elsif value == false
@@ -203,6 +204,48 @@ class RunpodTunnelsTest < Minitest::Test
     output = manager.render_status(rows)
     assert_includes output, "HEALTHY"
     assert_includes output, "STALE"
+  end
+
+  def test_repair_restarts_only_live_unhealthy_tunnel_and_preserves_healthy_peer
+    checks = 0
+    health = FakeHealth.new(
+      "http://127.0.0.1:11442" => lambda do
+        checks += 1
+        checks == 2 ? false : true
+      end
+    )
+    manager = build_manager(health: health)
+    initial = manager.start(worker_indices: [1, 2], wait_seconds: 1, poll_seconds: 0.01)
+    initial_by = initial.fetch("workers").to_h { |worker| [worker.fetch("index"), worker] }
+    pid1 = initial_by.fetch(1).fetch("pid")
+    pid2 = initial_by.fetch(2).fetch("pid")
+
+    rows = manager.repair(worker_indices: [1, 2], wait_seconds: 1, poll_seconds: 0.01)
+    by = rows.to_h { |row| [row.fetch("index"), row] }
+
+    assert_equal 3, @process.spawns.length
+    assert_equal pid1, by.fetch(1).fetch("pid")
+    refute_equal pid2, by.fetch(2).fetch("pid")
+    assert_equal [[pid2, 3.0]], @process.terminated
+    assert_equal ["healthy"], rows.map { |row| row.fetch("health_status") }.uniq
+    assert_includes @out.string, "Repairing tunnel(s): burst_2"
+    assert_includes @out.string, "Tunnel repair complete: 2/2 selected workers healthy."
+  end
+
+  def test_repair_refuses_pid_identity_mismatch_without_restarting_anything
+    manager = build_manager
+    state = manager.start(worker_indices: [1], wait_seconds: 1, poll_seconds: 0.01)
+    pid = state.fetch("workers").first.fetch("pid")
+    @process.mismatch(pid)
+
+    error = assert_raises(LocalModelEvaluation::RunpodTunnels::Error) do
+      manager.repair(worker_indices: [1], wait_seconds: 1, poll_seconds: 0.01)
+    end
+
+    assert_includes error.message, "managed pid identity does not match"
+    assert_equal 1, @process.spawns.length
+    assert_empty @process.terminated
+    assert @process.alive?(pid)
   end
 
   def test_stop_verifies_process_identity_before_killing
