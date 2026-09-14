@@ -1,6 +1,10 @@
-# local-model-evaluation
+# af-inference-orchestrator
 
 Small orchestration and experiment-management layer for running controlled `af-cli-scoring-utility` evaluations across local and remote Ollama workers.
+
+The repository is now named `af-inference-orchestrator` (AFIO). The public
+`bin/lme` command, `LocalModelEvaluation` Ruby namespace, and `LME_*`
+environment variables remain intentional compatibility names.
 
 ## Scope
 

@@ -10,7 +10,7 @@ cd "$SCRIPT_DIR" || {
 
 if [[ ! -x bin/lme ]]; then
   echo "ERROR: bin/lme not found or not executable in $(pwd)"
-  echo "Place this script in the root of local-model-eval."
+  echo "Place this script in the root of af-inference-orchestrator."
   exit 1
 fi
 
@@ -27,7 +27,7 @@ for f in "${MANIFESTS[@]}"; do
   fi
 done
 
-# local-model-eval resolves manifest model names through config/models.yml.
+# af-inference-orchestrator resolves manifest model names through config/models.yml.
 # The committed repo did not yet contain a GPT-OSS alias when this audition was built.
 if ! ruby -ryaml -e '
   cfg = YAML.load_file("config/models.yml")
@@ -118,7 +118,7 @@ run_discriminator() {
 
   if ! bin/lme run "$manifest"; then
     echo
-    echo "AUDITION FAILED: local-model-eval returned an operational error."
+    echo "AUDITION FAILED: af-inference-orchestrator returned an operational error."
     return 20
   fi
 

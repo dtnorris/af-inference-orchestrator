@@ -67,7 +67,7 @@ AF_SCORER_REPO="$HOME/code/af-cli-scoring-utility2" \
 ```
 
 The scorer checkout is frozen into `snapshot.yml` as a path relative to the
-`local-model-eval` checkout (for sibling copies, for example
+`af-inference-orchestrator` checkout (for sibling copies, for example
 `../af-cli-scoring-utility2`). Generated manifests point at that same checkout.
 Verify/run/resume resolve the frozen path, so they cannot silently fall back to
 the primary scorer repository.

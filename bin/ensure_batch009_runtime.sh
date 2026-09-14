@@ -19,7 +19,7 @@ set -u
 
 export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
 
-LME="$HOME/code/local-model-eval"
+LME="$HOME/code/af-inference-orchestrator"
 SCORER="$HOME/code/af-cli-scoring-utility"
 XLSX="$HOME/code/af-xlsx-data-sources"
 SOURCE="$HOME/code/md-for-llm-book-content"
@@ -282,7 +282,7 @@ else
   fi
 fi
 
-check_exact_repo "local-model-eval" "$LME" "$expected_lme"
+check_exact_repo "af-inference-orchestrator" "$LME" "$expected_lme"
 check_exact_repo "af-xlsx-data-sources" "$XLSX" "$expected_xlsx"
 check_exact_repo "md-for-llm-book-content" "$SOURCE" "$expected_source"
 check_exact_repo "md-specification-files" "$SPECS" "$expected_specs"

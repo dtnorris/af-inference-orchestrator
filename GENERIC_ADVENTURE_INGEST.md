@@ -6,7 +6,7 @@ or scorer. Historical preparers, verifiers, snapshots and manifests are retained
 
 ## Build and verify
 
-From the local-model-eval checkout, after freezing the exact target set:
+From the af-inference-orchestrator checkout, after freezing the exact target set:
 
 ```bash
 bin/build-production-backlog \

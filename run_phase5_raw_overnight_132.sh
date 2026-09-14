@@ -1,7 +1,7 @@
 #!/bin/zsh
 set -u
 
-REPO="${LME_REPO:-$HOME/code/local-model-eval}"
+REPO="${LME_REPO:-$HOME/code/af-inference-orchestrator}"
 SCRIPT_DIR="${0:A:h}"
 ORDER="$SCRIPT_DIR/phase5_raw_run_order.txt"
 FAILED="$REPO/phase5_raw_overnight_failed.txt"

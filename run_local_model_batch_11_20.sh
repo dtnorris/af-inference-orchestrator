@@ -1,8 +1,8 @@
 #!/bin/zsh
 
 (
-  cd "$HOME/code/local-model-eval" || {
-    echo "ERROR: Could not find $HOME/code/local-model-eval"
+  cd "$HOME/code/af-inference-orchestrator" || {
+    echo "ERROR: Could not find $HOME/code/af-inference-orchestrator"
     return
   }
 

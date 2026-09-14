@@ -1,6 +1,6 @@
 # Scorer Integration Gate
 
-`local-model-evaluation` is ready to target any already-running Ollama endpoint, but the current checked-out `af-cli-scoring-utility` must expose a configurable remote Ollama base URL.
+`af-inference-orchestrator` is ready to target any already-running Ollama endpoint, but the current checked-out `af-cli-scoring-utility` must expose a configurable remote Ollama base URL.
 
 ## Before spending cloud money
 

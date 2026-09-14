@@ -1,7 +1,7 @@
 #!/bin/zsh
 set -u
 
-REPO="${LME_REPO:-$HOME/code/local-model-eval}"
+REPO="${LME_REPO:-$HOME/code/af-inference-orchestrator}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ORDER="$SCRIPT_DIR/production_overnight3_run_order.txt"
 SESSIONS_ORDER="$SCRIPT_DIR/qualification/sessions-qwen-v0.1/run_order.txt"
