@@ -382,6 +382,40 @@ class RunpodBootstrapTest < Minitest::Test
     )
   end
 
+  def test_reuse_existing_is_forwarded_and_recorded_without_clean
+    script = fake_remote_script("puts 'reuse existing fixture'\n")
+
+    record = build_runner(script).run(
+      worker_indices: [2],
+      models: ["gemma4:26b"],
+      expected_digests: ["gemma4:26b=#{DIGEST}"],
+      reuse_existing: true,
+      poll_seconds: 0.005
+    )
+
+    command = @process_supervisor.commands.fetch(0).fetch(:command)
+    assert_includes command, "--reuse-existing"
+    refute_includes command, "--clean"
+    assert_equal true, record.fetch("reuse_existing")
+  end
+
+  def test_reuse_existing_rejects_clean_before_spawning
+    script = fake_remote_script("raise 'must not run'\n")
+
+    error = assert_raises(LocalModelEvaluation::RunpodBootstrap::Error) do
+      build_runner(script).run(
+        worker_indices: [1],
+        models: ["gemma4:26b"],
+        expected_digests: ["gemma4:26b=#{DIGEST}"],
+        clean: true,
+        reuse_existing: true
+      )
+    end
+
+    assert_includes error.message, "--clean cannot be combined with --reuse-existing"
+    assert_empty @process_supervisor.commands
+  end
+
   def test_bootstrap_addresses_worker_twelve
     @fleet.fetch("workers") << {
       "index" => 12,

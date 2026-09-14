@@ -186,8 +186,26 @@ storage profile; recreate those fleets once before using scale/replace.
 A replacement preserves the logical local endpoint and records the prior physical
 pod as generation history in fleet state. A failed replacement leaves the slot
 explicitly destroyed/retryable rather than pretending it is healthy. New and
-replacement workers still need the normal bootstrap and tunnel readiness steps;
-model-cache reuse is a separate capability.
+replacement workers still need bootstrap and tunnel readiness steps. When a
+worker recovery preserved its `/workspace/ollama-models` cache, use the cache-first
+bootstrap path instead of pulling the models again:
+
+```bash
+bin/lme runpod-bootstrap \
+  --workers 7 \
+  --model qwen3.6:35b-a3b \
+  --expect-digest qwen3.6:35b-a3b=<exact-64-hex-digest> \
+  --reuse-existing \
+  --fleet scoring-a6000
+```
+
+`--reuse-existing` never runs `ollama pull`, never stages model data on root disk,
+and never rsyncs model data into `/workspace`. It restarts Ollama against the
+existing shared cache and then runs the same exact digest, context-length, GPU,
+and full-VRAM-residency gates as a normal bootstrap. Missing cache/model data or
+a digest mismatch fails closed with no pull fallback; rerun normal bootstrap
+without `--reuse-existing` when the cache actually needs to be populated or
+refreshed. `--clean` and `--reuse-existing` are mutually exclusive.
 
 The generic dispatcher accepts independent jobs as structured JSON:
 

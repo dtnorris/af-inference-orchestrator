@@ -20,6 +20,7 @@ CLIENT_URL=http://127.0.0.1:11434
 MIN_VRAM_GB=40
 EXPECTED_GPU_NAME=""
 CLEAN=0
+REUSE_EXISTING=0
 MODELS=()
 declare -A EXPECTED_DIGESTS=()
 declare -A FINAL_DIGESTS=()
@@ -46,8 +47,9 @@ Options:
   --state-root PATH             Worker evidence directory (default: /workspace/lme-worker-state)
   --min-vram-gb N               Minimum detected GPU VRAM (default: 40)
   --expect-gpu NAME             Fail before model pull unless detected GPU name matches exactly.
-  --expect-digest MODEL=DIGEST  Fail unless the pulled model has this full digest. Repeatable.
+  --expect-digest MODEL=DIGEST  Fail unless the requested model has this full digest. Repeatable.
   --clean                       Delete both staging and shared Ollama stores before setup.
+  --reuse-existing              Reuse /workspace cache only; never pull, stage, or rsync model data.
   -h, --help                    Show this help.
 
 Example for the first automated worker-2 validation:
@@ -97,6 +99,8 @@ while (($#)); do
       shift 2 ;;
     --clean)
       CLEAN=1; shift ;;
+    --reuse-existing)
+      REUSE_EXISTING=1; shift ;;
     -h|--help)
       usage; exit 0 ;;
     *)
@@ -107,6 +111,15 @@ done
 ((${#MODELS[@]} > 0)) || { usage >&2; die "at least one --model is required"; }
 [[ "$CONTEXT_LENGTH" =~ ^[0-9]+$ ]] || die "--context must be an integer"
 [[ "$MIN_VRAM_GB" =~ ^[0-9]+$ ]] || die "--min-vram-gb must be an integer"
+if [[ $REUSE_EXISTING -eq 1 && $CLEAN -eq 1 ]]; then
+  die "--clean cannot be combined with --reuse-existing"
+fi
+if [[ $REUSE_EXISTING -eq 1 ]]; then
+  for model in "${MODELS[@]}"; do
+    [[ -n "${EXPECTED_DIGESTS[$model]:-}" ]] || \
+      die "--reuse-existing requires --expect-digest for $model; cache reuse never guesses model identity"
+  done
+fi
 [[ "$(id -u)" -eq 0 ]] || die "run this script as root inside the RunPod pod"
 
 STAMP="$(date -u '+%Y%m%dT%H%M%SZ')"
@@ -208,7 +221,9 @@ df -h / /workspace > "$STATE_DIR/disk-preflight.txt" 2>&1 || true
 cat "$STATE_DIR/disk-preflight.txt"
 
 missing_packages=()
-command -v rsync >/dev/null 2>&1 || missing_packages+=(rsync)
+if [[ $REUSE_EXISTING -eq 0 ]]; then
+  command -v rsync >/dev/null 2>&1 || missing_packages+=(rsync)
+fi
 command -v jq >/dev/null 2>&1 || missing_packages+=(jq)
 if ((${#missing_packages[@]})); then
   info "Installing required packages: ${missing_packages[*]}"
@@ -228,47 +243,59 @@ stop_ollama
 if [[ $CLEAN -eq 1 ]]; then
   info "--clean requested: deleting $STAGING_DIR and $SHARED_DIR"
   rm -rf "$STAGING_DIR" "$SHARED_DIR"
+  mkdir -p "$STAGING_DIR" "$SHARED_DIR"
+elif [[ $REUSE_EXISTING -eq 1 ]]; then
+  [[ -d "$SHARED_DIR" ]] || \
+    die "--reuse-existing requested but shared Ollama cache is missing: $SHARED_DIR; run normal bootstrap to populate it"
+  [[ -r "$SHARED_DIR" ]] || die "shared Ollama cache is not readable: $SHARED_DIR"
+  info "--reuse-existing requested: preserving shared store without modifying model data: $SHARED_DIR"
+  info "Local staging store is not used in cache-reuse mode: $STAGING_DIR"
 else
   info "Preserving existing shared store: $SHARED_DIR"
   info "Clearing only local staging store: $STAGING_DIR"
   rm -rf "$STAGING_DIR"
+  mkdir -p "$STAGING_DIR" "$SHARED_DIR"
 fi
-mkdir -p "$STAGING_DIR" "$SHARED_DIR"
 
-step "Stage requested models on fast local disk and copy them to workspace"
-for model in "${MODELS[@]}"; do
-  safe="${model//[^A-Za-z0-9._-]/_}"
-  printf '\n[%s] ---- Model: %s ----\n' "$(ts)" "$model"
-  info "Resetting local staging store before this model."
-  stop_ollama
-  rm -rf "$STAGING_DIR"
-  mkdir -p "$STAGING_DIR"
-  df -h / | tee "$STATE_DIR/disk-before-${safe}.txt"
+if [[ $REUSE_EXISTING -eq 1 ]]; then
+  step "Reuse existing workspace model cache without pull or copy"
+  info "Skipping staging, ollama pull, and rsync. Exact cached digests will be validated from the workspace-backed server."
+else
+  step "Stage requested models on fast local disk and copy them to workspace"
+  for model in "${MODELS[@]}"; do
+    safe="${model//[^A-Za-z0-9._-]/_}"
+    printf '\n[%s] ---- Model: %s ----\n' "$(ts)" "$model"
+    info "Resetting local staging store before this model."
+    stop_ollama
+    rm -rf "$STAGING_DIR"
+    mkdir -p "$STAGING_DIR"
+    df -h / | tee "$STATE_DIR/disk-before-${safe}.txt"
 
-  start_ollama "$STAGING_DIR" "staging-${safe}"
-  info "Pulling $model to fast local/root disk. Ollama will print download progress below."
-  OLLAMA_HOST="$CLIENT_URL" ollama pull "$model"
+    start_ollama "$STAGING_DIR" "staging-${safe}"
+    info "Pulling $model to fast local/root disk. Ollama will print download progress below."
+    OLLAMA_HOST="$CLIENT_URL" ollama pull "$model"
 
-  digest="$(model_digest "$model")"
-  [[ -n "$digest" && "$digest" != "null" ]] || die "could not read digest for $model after pull"
-  info "Pulled digest: $digest"
-  printf '%s\t%s\n' "$model" "$digest" >> "$STATE_DIR/pulled-model-digests.tsv"
+    digest="$(model_digest "$model")"
+    [[ -n "$digest" && "$digest" != "null" ]] || die "could not read digest for $model after pull"
+    info "Pulled digest: $digest"
+    printf '%s\t%s\n' "$model" "$digest" >> "$STATE_DIR/pulled-model-digests.tsv"
 
-  expected="${EXPECTED_DIGESTS[$model]:-}"
-  if [[ -n "$expected" && "$digest" != "$expected" ]]; then
-    die "digest mismatch for $model: expected $expected, got $digest"
-  fi
+    expected="${EXPECTED_DIGESTS[$model]:-}"
+    if [[ -n "$expected" && "$digest" != "$expected" ]]; then
+      die "digest mismatch for $model: expected $expected, got $digest"
+    fi
 
-  stop_ollama
-  info "Copying completed Ollama store into $SHARED_DIR. rsync progress follows."
-  if ! rsync -ah --info=progress2 "$STAGING_DIR/" "$SHARED_DIR/"; then
-    die "rsync to $SHARED_DIR failed (a RunPod workspace quota may have been reached)"
-  fi
-  info "Copy complete. Shared store now uses: $(du -sh "$SHARED_DIR" | awk '{print $1}')"
-  info "Removing local staging copy to recover root-disk space."
-  rm -rf "$STAGING_DIR"
-  mkdir -p "$STAGING_DIR"
-done
+    stop_ollama
+    info "Copying completed Ollama store into $SHARED_DIR. rsync progress follows."
+    if ! rsync -ah --info=progress2 "$STAGING_DIR/" "$SHARED_DIR/"; then
+      die "rsync to $SHARED_DIR failed (a RunPod workspace quota may have been reached)"
+    fi
+    info "Copy complete. Shared store now uses: $(du -sh "$SHARED_DIR" | awk '{print $1}')"
+    info "Removing local staging copy to recover root-disk space."
+    rm -rf "$STAGING_DIR"
+    mkdir -p "$STAGING_DIR"
+  done
+fi
 
 step "Start final workspace-backed Ollama server"
 start_ollama "$SHARED_DIR" "workspace"
@@ -325,6 +352,7 @@ step "Write durable worker evidence"
   echo "context_length=$CONTEXT_LENGTH"
   echo "shared_model_store=$SHARED_DIR"
   echo "server_url=$CLIENT_URL"
+  echo "reuse_existing=$REUSE_EXISTING"
   echo "models=${MODELS[*]}"
 } > "$STATE_DIR/worker-summary.txt"
 

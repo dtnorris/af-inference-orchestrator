@@ -22,6 +22,7 @@ opts = {
   models: [],
   expected_digests: [],
   clean: false,
+  reuse_existing: false,
   context: nil,
   heartbeat_seconds: ENV.fetch(
     "LME_RUNPOD_BOOTSTRAP_HEARTBEAT_SECONDS",
@@ -35,6 +36,7 @@ parser = OptionParser.new do |o|
   o.on("--model MODEL", "Ollama model to bootstrap; repeatable") { |v| opts[:models] << v }
   o.on("--expect-digest MODEL=DIGEST", "Required exact 64-hex digest for each --model; repeatable") { |v| opts[:expected_digests] << v }
   o.on("--clean", "Delete staging/shared Ollama stores before bootstrap") { opts[:clean] = true }
+  o.on("--reuse-existing", "Reuse and validate the existing /workspace Ollama cache; never pull or copy models") { opts[:reuse_existing] = true }
   o.on("--context N", Integer, "Ollama context length; remote default is 131072") { |v| opts[:context] = v }
   o.on("--heartbeat-seconds N", Float, "Fleet heartbeat interval (default: 10)") { |v| opts[:heartbeat_seconds] = v }
 end
@@ -43,6 +45,9 @@ begin
   parser.parse!(ARGV)
   raise OptionParser::MissingArgument, "--workers" unless opts[:workers]
   raise OptionParser::MissingArgument, "--model" if opts[:models].empty?
+  if opts[:clean] && opts[:reuse_existing]
+    raise OptionParser::InvalidArgument, "--clean cannot be combined with --reuse-existing"
+  end
   raise OptionParser::InvalidArgument, "unexpected arguments: #{ARGV.join(' ')}" unless ARGV.empty?
 rescue OptionParser::ParseError => e
   warn "ERROR: #{e.message}"
@@ -70,6 +75,7 @@ begin
     models: opts[:models],
     expected_digests: opts[:expected_digests],
     clean: opts[:clean],
+    reuse_existing: opts[:reuse_existing],
     context: opts[:context],
     heartbeat_seconds: opts[:heartbeat_seconds]
   )

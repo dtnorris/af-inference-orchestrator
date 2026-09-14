@@ -30,7 +30,7 @@ module LocalModelEvaluation
       @out.sync = true if @out.respond_to?(:sync=)
     end
 
-    def run(worker_indices:, models:, expected_digests: [], clean: false, context: nil,
+    def run(worker_indices:, models:, expected_digests: [], clean: false, reuse_existing: false, context: nil,
             heartbeat_seconds: DEFAULT_HEARTBEAT_SECONDS, poll_seconds: DEFAULT_POLL_SECONDS)
       fleet = active_fleet!
       workers = selected_workers(fleet, worker_indices)
@@ -38,6 +38,9 @@ module LocalModelEvaluation
       digests = normalize_digests(expected_digests, models)
       expected_gpu = fleet.dig("gpu", "id").to_s
       raise Error, "current fleet does not record an exact GPU id" if expected_gpu.empty?
+      if clean && reuse_existing
+        raise Error, "--clean cannot be combined with --reuse-existing"
+      end
 
       heartbeat_seconds = positive_float(heartbeat_seconds, "heartbeat seconds")
       poll_seconds = positive_float(poll_seconds, "poll seconds")
@@ -53,6 +56,7 @@ module LocalModelEvaluation
           digests:,
           expected_gpu:,
           clean:,
+          reuse_existing:,
           context:,
           heartbeat_seconds:,
           poll_seconds:,
@@ -65,7 +69,7 @@ module LocalModelEvaluation
 
     private
 
-    def execute_run(fleet:, workers:, models:, digests:, expected_gpu:, clean:, context:,
+    def execute_run(fleet:, workers:, models:, digests:, expected_gpu:, clean:, reuse_existing:, context:,
                     heartbeat_seconds:, poll_seconds:, bootstrap_root:)
       started_wall = utc_now
       started_mono = @monotonic_clock.call
@@ -79,6 +83,7 @@ module LocalModelEvaluation
         digests:,
         expected_gpu:,
         clean:,
+        reuse_existing:,
         context:,
         heartbeat_seconds:,
         started_wall:,
@@ -96,6 +101,7 @@ module LocalModelEvaluation
             digests:,
             expected_gpu:,
             clean:,
+            reuse_existing:,
             context:,
             run_dir:
           )
@@ -280,12 +286,13 @@ module LocalModelEvaluation
       digests
     end
 
-    def spawn_worker(worker:, models:, digests:, expected_gpu:, clean:, context:, run_dir:)
+    def spawn_worker(worker:, models:, digests:, expected_gpu:, clean:, reuse_existing:, context:, run_dir:)
       index = worker.fetch("index")
       command = [@remote_setup_path, "--worker", index.to_s]
       command.concat(["--expect-gpu", expected_gpu])
       command.concat(["--min-vram-gb", ENV.fetch("RUNPOD_GPU_MEMORY_GB", "40")])
       command << "--clean" if clean
+      command << "--reuse-existing" if reuse_existing
       models.each do |model|
         command.concat(["--model", model])
         command.concat(["--expect-digest", "#{model}=#{digests.fetch(model)}"])
@@ -314,6 +321,7 @@ module LocalModelEvaluation
         [/\b\d+(?:\.\d+)?[KMGT]\s+\d+%\s+\d+(?:\.\d+)?[KMGT]?B\/s/i, "COPYING"],
         [/Pulling /, "PULLING"],
         [/pulling [0-9a-f]{8,}:/i, "PULLING"],
+        [/\[3\/8\] Reuse existing workspace model cache/, "REUSING"],
         [/\[3\/8\] Stage requested models/, "STAGING"],
         [/\[2\/8\] Normalize Ollama state/, "PREPARING"],
         [/\[1\/8\] Preflight host/, "PREFLIGHT"],
@@ -499,7 +507,7 @@ module LocalModelEvaluation
       remaining.each { |pid| @process_supervisor.wait(pid) }
     end
 
-    def initial_record(fleet:, workers:, models:, digests:, expected_gpu:, clean:, context:,
+    def initial_record(fleet:, workers:, models:, digests:, expected_gpu:, clean:, reuse_existing:, context:,
                        heartbeat_seconds:, started_wall:, run_id:)
       {
         "schema_version" => 2,
@@ -512,6 +520,7 @@ module LocalModelEvaluation
         "expected_digests" => digests,
         "expected_gpu" => expected_gpu,
         "clean" => clean,
+        "reuse_existing" => reuse_existing,
         "context" => context,
         "heartbeat_seconds" => heartbeat_seconds,
         "fleet_hourly_rate_usd" => fleet.fetch("fleet_hourly_rate_usd"),

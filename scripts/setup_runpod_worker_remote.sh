@@ -145,7 +145,7 @@ for arg in "${REMOTE_ARGS[@]}"; do
 done
 
 info "[4/4] Streaming setup_runpod_ollama_worker.sh to worker $WORKER ..."
-info "Remote setup progress follows; model pulls and rsync may take several minutes."
+info "Remote setup progress follows. Normal bootstrap may pull/rsync models; --reuse-existing never does."
 ssh \
   "${SSH_COMMON_ARGS[@]}" \
   "$SSH_USER@$HOST" \
