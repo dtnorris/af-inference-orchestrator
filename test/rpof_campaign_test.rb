@@ -15,50 +15,51 @@ class RpofCampaignTest < Minitest::Test
   def setup
     @tmp = Dir.mktmpdir("rpof-campaign-")
     @fake = File.join(@tmp, "rpof")
-    File.write(@fake, <<~'RUBY')
-      #!/usr/bin/env ruby
-      require "fileutils"
-      require "json"
-      command = ARGV.shift
-      request = JSON.parse(File.read(ARGV.fetch(ARGV.index("--request") + 1)))
-      capture = File.join(ENV.fetch("CAPTURE_ROOT"), "#{command}.json")
-      File.write(capture, JSON.pretty_generate(request) + "\n")
-      case command
-      when "capability-check"
-        output = ARGV.fetch(ARGV.index("--output") + 1)
-        File.write(output, JSON.pretty_generate(
-          "contract_version" => "afio-rpof-capability-check-result/v0.1",
-          "ready" => true,
-          "fleet_key" => request.fetch("fleet_key"),
-          "fleet_id" => "fixture-fleet",
-          "selected_worker_indices" => [1, 2],
-          "capabilities" => nil,
-          "diagnostics" => []
-        ) + "\n")
-      when "dispatch"
-        output = ARGV.fetch(ARGV.index("--output") + 1)
-        FileUtils.mkdir_p(output)
-        jobs = request.fetch("jobs")
-        File.write(File.join(output, "summary.json"), JSON.pretty_generate(
-          "contract_version" => "afio-rpof-dispatch-summary/v0.1",
-          "fleet_key" => request.dig("target", "fleet_key"),
-          "fleet_id" => request.dig("target", "expected_fleet_id"),
-          "started_at_utc" => "2026-09-14T12:00:00Z",
-          "finished_at_utc" => "2026-09-14T12:00:01Z",
-          "status" => "completed",
-          "worker_count" => 2,
-          "job_count" => jobs.length,
-          "completed_count" => jobs.length,
-          "failed_count" => 0,
-          "not_started_count" => 0,
-          "not_started_job_ids" => [],
-          "infrastructure_failures" => [],
-          "jobs" => []
-        ) + "\n")
-      else
-        abort "unexpected command"
-      end
-    RUBY
+    File.write(@fake, <<~'SH')
+      #!/bin/sh
+      set -eu
+      command=$1
+      shift
+      request=""
+      output=""
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --request)
+            request=$2
+            shift 2
+            ;;
+          --output)
+            output=$2
+            shift 2
+            ;;
+          --workdir)
+            shift 2
+            ;;
+          *)
+            shift
+            ;;
+        esac
+      done
+
+      cp "$request" "$CAPTURE_ROOT/$command.json"
+      case "$command" in
+        capability-check)
+          cat >"$output" <<'JSON'
+      {"contract_version":"afio-rpof-capability-check-result/v0.1","ready":true,"fleet_key":"fixture","fleet_id":"fixture-fleet","selected_worker_indices":[1,2],"capabilities":null,"diagnostics":[]}
+      JSON
+          ;;
+        dispatch)
+          mkdir -p "$output"
+          cat >"$output/summary.json" <<'JSON'
+      {"contract_version":"afio-rpof-dispatch-summary/v0.1","fleet_key":"fixture","fleet_id":"fixture-fleet","started_at_utc":"2026-09-14T12:00:00Z","finished_at_utc":"2026-09-14T12:00:01Z","status":"completed","worker_count":2,"job_count":1,"completed_count":1,"failed_count":0,"not_started_count":0,"not_started_job_ids":[],"infrastructure_failures":[],"jobs":[]}
+      JSON
+          ;;
+        *)
+          echo "unexpected command: $command" >&2
+          exit 2
+          ;;
+      esac
+    SH
     FileUtils.chmod(0o755, @fake)
   end
 
@@ -102,6 +103,7 @@ class RpofCampaignTest < Minitest::Test
     assert status.success?, stdout + stderr
     capability = JSON.parse(File.read(File.join(@tmp, "capability-check.json")))
     assert_equal "afio-rpof-capability-check-request/v0.1", capability.fetch("contract_version")
+    assert_equal "fixture", capability.fetch("fleet_key")
     assert_equal [1, 2], capability.dig("worker_selector", "indices")
     assert_equal DIGEST, capability.dig("requirements", "models", 0, "expected_digest")
     assert_equal "fixture-gpu", capability.dig("requirements", "required_gpu_id")

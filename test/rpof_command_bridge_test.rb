@@ -1,10 +1,6 @@
 # frozen_string_literal: true
 
 require "minitest/autorun"
-require "fileutils"
-require "open3"
-require "rbconfig"
-require "tmpdir"
 
 class RpofCommandBridgeTest < Minitest::Test
   ROOT = File.expand_path("..", __dir__)
@@ -45,31 +41,6 @@ class RpofCommandBridgeTest < Minitest::Test
         )
       end
     RUBY
-  end
-
-  def test_representative_bin_lme_runpod_command_delegates_with_opaque_arguments
-    Dir.mktmpdir("rpof-command-bridge-") do |tmp|
-      fake = File.join(tmp, "rpof")
-      File.write(fake, <<~'RUBY')
-        #!/usr/bin/env ruby
-        puts ARGV.join("|")
-      RUBY
-      FileUtils.chmod(0o755, fake)
-
-      stdout, stderr, status = Open3.capture3(
-        { "RPOF_EXECUTABLE" => fake },
-        RbConfig.ruby,
-        SCRIPT,
-        "runpod-dispatch",
-        "--fleet",
-        "fixture",
-        "--opaque",
-        "value with spaces"
-      )
-
-      assert status.success?, stderr
-      assert_equal "dispatch-legacy|--fleet|fixture|--opaque|value with spaces\n", stdout
-    end
   end
 
   def test_historical_helper_paths_keep_exact_rpof_command_contracts

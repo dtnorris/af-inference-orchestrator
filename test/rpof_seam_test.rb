@@ -19,10 +19,19 @@ class RpofSeamTest < Minitest::Test
 
   def test_explicit_executable_is_invoked_without_ruby_import
     fake = File.join(@tmp, "rpof")
-    File.write(fake, <<~RUBY)
-      #!/usr/bin/env ruby
-      puts ARGV.join("|")
-    RUBY
+    File.write(fake, <<~'SH')
+      #!/bin/sh
+      set -eu
+      first=1
+      for arg in "$@"; do
+        if [ "$first" -eq 0 ]; then
+          printf '|'
+        fi
+        printf '%s' "$arg"
+        first=0
+      done
+      printf '\n'
+    SH
     FileUtils.chmod(0o755, fake)
 
     stdout, stderr, status = Open3.capture3(

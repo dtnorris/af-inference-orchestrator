@@ -16,21 +16,25 @@ class RpofClientTest < Minitest::Test
   end
 
   def test_capability_check_reads_versioned_result
-    File.write(@fake, <<~'RUBY')
-      #!/usr/bin/env ruby
-      require "json"
-      output = ARGV[ARGV.index("--output") + 1]
-      request = JSON.parse(File.read(ARGV[ARGV.index("--request") + 1]))
-      File.write(output, JSON.generate({
-        "contract_version" => "afio-rpof-capability-check-result/v0.1",
-        "ready" => true,
-        "fleet_key" => request.fetch("fleet_key"),
-        "fleet_id" => "fixture-fleet",
-        "selected_worker_indices" => [1],
-        "capabilities" => nil,
-        "diagnostics" => []
-      }))
-    RUBY
+    File.write(@fake, <<~'SH')
+      #!/bin/sh
+      set -eu
+      output=""
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --output)
+            output=$2
+            shift 2
+            ;;
+          *)
+            shift
+            ;;
+        esac
+      done
+      cat >"$output" <<'JSON'
+      {"contract_version":"afio-rpof-capability-check-result/v0.1","ready":true,"fleet_key":"fixture","fleet_id":"fixture-fleet","selected_worker_indices":[1],"capabilities":null,"diagnostics":[]}
+      JSON
+    SH
     FileUtils.chmod(0o755, @fake)
     client = LocalModelEvaluation::RpofClient.new(repo_root: @tmp, executable: @fake)
     result = client.capability_check({ "fleet_key" => "fixture" })
