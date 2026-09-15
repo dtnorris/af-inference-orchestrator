@@ -51,7 +51,7 @@ module LocalModelEvaluation
         generated_at: Time.now.iso8601,
         ruby_version: RUBY_VERSION,
         ruby_platform: RUBY_PLATFORM,
-        lme_git_commit: git_commit(File.expand_path("../..", __dir__)),
+        afio_git_commit: git_commit(File.expand_path("../..", __dir__)),
         scorer_git_commit: git_commit(experiment.scorer_repo),
         scorer_repo: experiment.scorer_repo,
         dispatch: experiment.dispatch

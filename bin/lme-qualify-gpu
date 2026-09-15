@@ -266,7 +266,7 @@ max_total_hourly_usd=$MAX_TOTAL_HOURLY_USD
 watchdog_minutes=$WATCHDOG_MINUTES
 matcher_repo=$MATCHER_REPO
 matcher_git_sha=$MATCHER_SHA
-lme_git_sha=$LME_SHA
+afio_git_sha=$LME_SHA
 EOF
 
 info "Creating one paid $GPU_ID qualification pod ..."

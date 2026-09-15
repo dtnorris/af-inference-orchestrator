@@ -33,6 +33,8 @@ class MatcherBurstScriptTest < Minitest::Test
     assert_includes text, '--group-by-affinity'
     assert_includes text, 'runpod-destroy --workers 1-8 --yes'
     assert_includes text, 'WATCHDOG_MINUTES="${LME_MATCHER_BURST_WATCHDOG_MINUTES:-25}"'
+    assert_includes text, 'afio_git_sha=$LME_SHA'
+    refute_includes text, 'lme_git_sha=$LME_SHA'
     refute_includes text, 'fleet.env'
     refute_includes text, 'source "$FLEET_ENV"'
     refute_includes text, 'LME_BURST_${worker}_URL'

@@ -35,6 +35,8 @@ class RunpodGpuQualificationScriptTest < Minitest::Test
     assert_includes File.read(File.join(REPO_ROOT, "bin", "lme-matcher-remote-job")), 'size == size_vram'
     assert_includes text, 'runpod-destroy --workers 1 --yes'
     assert_includes text, 'WATCHDOG_MINUTES="${LME_GPU_QUAL_WATCHDOG_MINUTES:-15}"'
+    assert_includes text, 'afio_git_sha=$LME_SHA'
+    refute_includes text, 'lme_git_sha=$LME_SHA'
     refute_includes text, 'fleet.env'
     refute_includes text, 'source "$FLEET_ENV"'
     refute_includes text, 'LME_BURST_1_URL'

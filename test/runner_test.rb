@@ -45,6 +45,9 @@ class RunnerTest < Minitest::Test
       out = StringIO.new
       runner = LocalModelEvaluation::Runner.new(experiment: exp, workers:, models:, output_root: File.join(dir, "out"), io: out)
       runner.run(jobs)
+      environment = JSON.parse(File.read(File.join(runner.output_dir, "environment.json")))
+      assert environment.key?("afio_git_commit")
+      refute environment.key?("lme_git_commit")
       metadata = JSON.parse(File.read(File.join(runner.output_dir, "runs", jobs.first.id, "metadata.json")))
       assert_equal "complete", metadata["status"]
       assert File.file?(File.join(runner.output_dir, "runs", jobs.first.id, "native", "result.json"))
