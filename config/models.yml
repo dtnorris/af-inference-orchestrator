@@ -1,4 +1,7 @@
 ---
+# Locally qualified AdventureFinder models retain their established runtime
+# identity in ollama_model. pull_model is the preferred acquisition locator;
+# qualified_manifest_sha256 is the exact qualified Ollama artifact identity.
 models:
   granite:
     ollama_model: granite4:32b-a9b-h
@@ -6,14 +9,22 @@ models:
     ollama_model: glm-4.7-flash
   gemma:
     ollama_model: gemma4:26b
+    pull_model: gemma4:26b-a4b-it-mtp-q4_K_M
+    qualified_manifest_sha256: 08ae7ec1744bd7f451c4a530afb39d2673ad9d07a8369b8a33a3613b41212a68
   qwen:
     ollama_model: qwen3.6:35b-a3b
+    pull_model: qwen3.6:35b-a3b-q4_K_M
+    qualified_manifest_sha256: 07d35212591fc27746f0a317c975a6d68754fb38e9053d82e25f06057af28522
   qwen27:
     ollama_model: qwen3.6:27b
+    pull_model: dhiltgen/qwen3.6:27b-q4_K_M
+    qualified_manifest_sha256: a50eda8ed977ab48a12431878896b27ffd5cef552c17af3317d9623b939a7f1e
   nemotron:
     ollama_model: nemotron-3-nano:30b
   gptoss:
     ollama_model: gpt-oss:20b
+    pull_model: gpt-oss:20b
+    qualified_manifest_sha256: 17052f91a42e97930aa6e28a6c6c06a983e6a58dbb00434885a0cf5313e376f7
   gemma4mlx:
     ollama_model: gemma4:31b-mlx
   ministral:
