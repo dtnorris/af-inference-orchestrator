@@ -1,0 +1,150 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "digest"
+require "fileutils"
+require "json"
+require "optparse"
+require "pathname"
+
+ROOT = File.expand_path(ENV.fetch("LME_REPO", File.expand_path("..", __dir__)))
+$LOAD_PATH.unshift File.join(ROOT, "lib")
+require "local_model_evaluation/rpof_client"
+
+PLAN_CONTRACT = "afio-production-execution-pool-plan/v0.1"
+REQUEST_CONTRACT = "afio-rpof-execution-pool-fulfill-request/v0.1"
+HANDOFF_CONTRACT = "afio-production-execution-pool-handoff/v0.1"
+
+opts = {
+  pool: nil,
+  output: nil,
+  dry_run: false,
+  yes: false
+}
+
+parser = OptionParser.new do |o|
+  o.banner = "Usage: bin/lme-production-pool-fulfill PLAN.json --pool POOL --output PATH [--dry-run|--yes]"
+  o.on("--pool POOL", "Execution-pool id from the deterministic AFIO plan") { |v| opts[:pool] = v }
+  o.on("--output PATH", "Write AFIO↔RPOF fulfillment handoff JSON") { |v| opts[:output] = v }
+  o.on("--dry-run", "Plan RPOF capacity without creating paid resources") { opts[:dry_run] = true }
+  o.on("--yes", "Authorize paid RPOF execution-pool fulfillment") { opts[:yes] = true }
+end
+
+begin
+  parser.parse!(ARGV)
+  plan_arg = ARGV.shift
+  raise OptionParser::MissingArgument, "PLAN.json" unless plan_arg
+  raise OptionParser::MissingArgument, "--pool" unless opts[:pool]
+  raise OptionParser::MissingArgument, "--output" unless opts[:output]
+  raise OptionParser::InvalidArgument, "--dry-run and --yes are mutually exclusive" if opts[:dry_run] && opts[:yes]
+  raise OptionParser::InvalidArgument, "use --dry-run or --yes" unless opts[:dry_run] || opts[:yes]
+  raise OptionParser::InvalidArgument, "unexpected arguments: #{ARGV.join(' ')}" unless ARGV.empty?
+rescue OptionParser::ParseError => e
+  warn "ERROR: #{e.message}"
+  warn parser
+  exit 2
+end
+
+def within_root(path)
+  expanded = File.expand_path(path, ROOT)
+  prefix = ROOT.end_with?(File::SEPARATOR) ? ROOT : "#{ROOT}#{File::SEPARATOR}"
+  raise "path escapes repository root: #{expanded}" unless expanded == ROOT || expanded.start_with?(prefix)
+  expanded
+end
+
+def relative_path(path)
+  Pathname.new(path).relative_path_from(Pathname.new(ROOT)).to_s
+rescue ArgumentError
+  path
+end
+
+begin
+  plan_path = within_root(plan_arg)
+  raise "execution-pool plan not found: #{plan_path}" unless File.file?(plan_path)
+  plan_bytes = File.binread(plan_path)
+  plan = JSON.parse(plan_bytes)
+  unless plan["contract_version"] == PLAN_CONTRACT
+    raise "unsupported execution-pool plan version: #{plan['contract_version'].inspect}"
+  end
+
+  pool_id = opts.fetch(:pool).to_s
+  pool = Array(plan.fetch("pools")).find { |candidate| candidate["pool_id"].to_s == pool_id }
+  raise "execution pool #{pool_id.inspect} is not present in #{relative_path(plan_path)}" unless pool
+
+  requirements = pool.fetch("requirements")
+  capacity = pool.fetch("capacity")
+  request = {
+    "contract_version" => REQUEST_CONTRACT,
+    "plan_sha256" => Digest::SHA256.hexdigest(plan_bytes),
+    "pool_id" => pool.fetch("pool_id"),
+    "requirements" => {
+      "ollama_model" => requirements.fetch("ollama_model"),
+      "pull_model" => requirements.fetch("pull_model"),
+      "expected_digest" => requirements.fetch("expected_digest"),
+      "required_context_length" => requirements.fetch("required_context_length"),
+      "require_fully_gpu_resident" => requirements.fetch("require_fully_gpu_resident")
+    },
+    "capacity" => {
+      "desired_workers" => capacity.fetch("desired_workers"),
+      "minimum_workers" => capacity.fetch("minimum_workers"),
+      "max_pool_hourly_usd" => capacity.fetch("max_pool_hourly_usd"),
+      "max_total_hourly_usd" => plan.dig("capacity", "max_total_hourly_usd")
+    }
+  }
+
+  client = LocalModelEvaluation::RpofClient.new(repo_root: ROOT)
+  result, rpof_exit, stdout, stderr = client.fulfill_execution_pool(
+    request:,
+    dry_run: opts.fetch(:dry_run),
+    assume_yes: opts.fetch(:yes),
+    stream_output: true
+  )
+  $stdout.write(stdout) unless stdout.empty?
+  $stderr.write(stderr) unless stderr.empty?
+
+  unless result["plan_sha256"].to_s == request.fetch("plan_sha256") &&
+         result["pool_id"].to_s == request.fetch("pool_id")
+    raise "RPOF fulfillment result does not match the submitted AFIO plan/pool identity"
+  end
+
+  handoff = {
+    "contract_version" => HANDOFF_CONTRACT,
+    "plan" => {
+      "path" => relative_path(plan_path),
+      "sha256" => request.fetch("plan_sha256")
+    },
+    "pool_id" => pool.fetch("pool_id"),
+    "request" => request,
+    "result" => result
+  }
+
+  output_path = within_root(opts.fetch(:output))
+  FileUtils.mkdir_p(File.dirname(output_path))
+  tmp = "#{output_path}.tmp.#{$$}"
+  begin
+    File.write(tmp, JSON.pretty_generate(handoff) + "\n")
+    File.rename(tmp, output_path)
+  ensure
+    File.delete(tmp) if File.exist?(tmp)
+  end
+
+  puts "AFIO ↔ RPOF execution-pool handoff"
+  puts "  Pool: #{pool.fetch('pool_id')}"
+  puts "  Model: #{requirements.fetch('ollama_model')}"
+  puts "  Workers requested: #{capacity.fetch('minimum_workers')}/#{capacity.fetch('desired_workers')} minimum/desired"
+  puts format("  Pool hourly ceiling: $%.4f/hr", Float(capacity.fetch("max_pool_hourly_usd")))
+  puts format("  Aggregate hourly ceiling: $%.4f/hr", Float(plan.dig("capacity", "max_total_hourly_usd")))
+  puts "  Execution handle: #{result.fetch('execution_handle')}"
+  puts "  RPOF status: #{result.fetch('status')}"
+  puts "  Ready workers: #{result.fetch('worker_indices').join(', ')}" unless result.fetch("worker_indices").empty?
+  puts "  Handoff: #{output_path}"
+  puts "  AFIO supplied no GPU/provider selection; RPOF owns hardware qualification and fulfillment."
+
+  exit(result["ready"] == true || result["status"] == "planned" ? 0 : (rpof_exit.zero? ? 1 : rpof_exit))
+rescue JSON::ParserError => e
+  warn "ERROR: invalid execution-pool plan JSON: #{e.message}"
+  exit 1
+rescue LocalModelEvaluation::RpofClient::Error, KeyError, ArgumentError, TypeError, RuntimeError => e
+  warn "ERROR: #{e.message}"
+  exit 1
+end

@@ -34,6 +34,45 @@ module LocalModelEvaluation
       raise Error, "RPOF capability result is invalid JSON: #{e.message}"
     end
 
+    def fulfill_execution_pool(request:, dry_run: false, assume_yes: false, stream_output: false)
+      with_json_file(request) do |request_path|
+        Tempfile.create(["rpof-execution-pool-result", ".json"]) do |result|
+          result.close
+          command = [
+            @executable, "execution-pool-fulfill",
+            "--request", request_path,
+            "--output", result.path
+          ]
+          command << "--dry-run" if dry_run
+          command << "--yes" if assume_yes
+
+          if stream_output
+            system(*command, chdir: @repo_root)
+            status = $?
+            raise Error, "RPOF execution-pool fulfillment did not start" unless status
+            stdout = ""
+            stderr = ""
+          else
+            stdout, stderr, status = Open3.capture3(*command, chdir: @repo_root)
+          end
+
+          if status.exitstatus == 2
+            raise Error, "RPOF execution-pool fulfillment rejected request: #{stderr.strip}"
+          end
+          unless File.file?(result.path) && File.size?(result.path)
+            raise Error, "RPOF execution-pool fulfillment did not write result: #{stderr.strip}"
+          end
+          document = JSON.parse(File.read(result.path))
+          unless document["contract_version"] == "afio-rpof-execution-pool-fulfill-result/v0.1"
+            raise Error, "unsupported RPOF execution-pool result version: #{document['contract_version'].inspect}"
+          end
+          return [document, status.exitstatus, stdout, stderr]
+        end
+      end
+    rescue JSON::ParserError => e
+      raise Error, "RPOF execution-pool result is invalid JSON: #{e.message}"
+    end
+
     def dispatch(request:, workdir:, output_dir:, stream_output: false)
       with_json_file(request) do |request_path|
         command = [
