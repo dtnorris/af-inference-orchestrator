@@ -20,6 +20,7 @@ class RpofCampaignTest < Minitest::Test
       set -eu
       command=$1
       shift
+      printf '%s\n' "$@" > "$CAPTURE_ROOT/$command.args"
       request=""
       output=""
       while [ "$#" -gt 0 ]; do
@@ -40,6 +41,11 @@ class RpofCampaignTest < Minitest::Test
             ;;
         esac
       done
+
+      if [ "$command" = "shutdown" ]; then
+        echo "fixture: terminal shutdown gate armed"
+        exit 0
+      fi
 
       cp "$request" "$CAPTURE_ROOT/$command.json"
       case "$command" in
@@ -114,6 +120,13 @@ class RpofCampaignTest < Minitest::Test
     assert_equal true, dispatch.fetch("group_by_affinity")
     assert_equal "fixture-job", dispatch.dig("jobs", 0, "job_id")
     assert File.file?(capability_output)
+
+    shutdown_args = File.readlines(File.join(@tmp, "shutdown.args"), chomp: true)
+    assert_equal [
+      "--fleet", "fixture", "--workers", "1,2", "--terminal",
+      "--inactive-minutes", "5.0", "--drain-timeout-minutes", "10.0",
+      "--reason", "afio_campaign_completed"
+    ], shutdown_args
   end
 
   def test_production_remote_jobs_require_source_preflight_queue

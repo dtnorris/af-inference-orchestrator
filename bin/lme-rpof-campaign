@@ -24,7 +24,10 @@ opts = {
   output: nil,
   capability_output: nil,
   source_preflight_queue: nil,
-  group_by_affinity: false
+  group_by_affinity: false,
+  keep_fleet: false,
+  terminal_inactivity_minutes: 5.0,
+  shutdown_drain_timeout_minutes: 10.0
 }
 parser = OptionParser.new do |o|
   o.banner = "Usage: bin/lme-rpof-campaign --jobs FILE --workdir DIR --output DIR (--workers LIST|--all) --model NAME --context N [options]"
@@ -45,6 +48,9 @@ parser = OptionParser.new do |o|
   o.on("--capability-output FILE", "Persist the generic capability result") { |v| opts[:capability_output] = v }
   o.on("--source-preflight-queue QUEUE", "Frozen production queue used to source-preflight selected production jobs") { |v| opts[:source_preflight_queue] = v }
   o.on("--group-by-affinity", "Request stable generic affinity grouping") { opts[:group_by_affinity] = true }
+  o.on("--keep-fleet", "Do not arm the default post-campaign terminal shutdown gate") { opts[:keep_fleet] = true }
+  o.on("--terminal-inactivity-minutes MINUTES", Float, "Continuous inactivity window before automatic shutdown (default: 5)") { |v| opts[:terminal_inactivity_minutes] = v }
+  o.on("--shutdown-drain-timeout-minutes MINUTES", Float, "Maximum graceful drain wait after terminal gate fires (default: 10)") { |v| opts[:shutdown_drain_timeout_minutes] = v }
 end
 
 begin
@@ -57,6 +63,8 @@ begin
   end
   raise OptionParser::InvalidArgument, "--context must be positive" unless opts[:context].positive?
   raise OptionParser::MissingArgument, "--model" if opts[:models].empty?
+  raise OptionParser::InvalidArgument, "--terminal-inactivity-minutes must be positive" unless opts[:terminal_inactivity_minutes].positive?
+  raise OptionParser::InvalidArgument, "--shutdown-drain-timeout-minutes must be positive" unless opts[:shutdown_drain_timeout_minutes].positive?
   unknown_digests = opts[:expected_digests].keys - opts[:models]
   raise OptionParser::InvalidArgument, "digest supplied for unrequested model(s): #{unknown_digests.join(', ')}" unless unknown_digests.empty?
 rescue OptionParser::ParseError => e
@@ -165,15 +173,46 @@ begin
     "group_by_affinity" => opts.fetch(:group_by_affinity),
     "jobs" => jobs
   }
-  summary, _rpof_exit, stdout, stderr = client.dispatch(
-    request: dispatch_request,
-    workdir: opts.fetch(:workdir),
-    output_dir: opts.fetch(:output),
-    stream_output: true
-  )
+  begin
+    summary, _rpof_exit, stdout, stderr = client.dispatch(
+      request: dispatch_request,
+      workdir: opts.fetch(:workdir),
+      output_dir: opts.fetch(:output),
+      stream_output: true
+    )
+  rescue Interrupt
+    unless opts.fetch(:keep_fleet)
+      begin
+        handoff = client.terminal_shutdown(
+          fleet_key: opts.fetch(:fleet),
+          worker_indices: selected_workers,
+          inactivity_minutes: opts.fetch(:terminal_inactivity_minutes),
+          drain_timeout_minutes: opts.fetch(:shutdown_drain_timeout_minutes),
+          reason: "afio_campaign_interrupted"
+        )
+        warn "RPOF terminal gate after interrupt: #{handoff}" unless handoff.empty?
+      rescue LocalModelEvaluation::RpofClient::Error => e
+        warn "WARNING: could not arm RPOF terminal gate after interrupt: #{e.message}"
+      end
+    end
+    raise
+  end
   $stdout.write(stdout) unless stdout.empty?
   $stderr.write(stderr) unless stderr.empty?
   puts "RPOF campaign: #{summary.fetch('status')} (#{summary.fetch('completed_count')}/#{summary.fetch('job_count')} completed)"
+
+  unless opts.fetch(:keep_fleet)
+    handoff = client.terminal_shutdown(
+      fleet_key: opts.fetch(:fleet),
+      worker_indices: selected_workers,
+      inactivity_minutes: opts.fetch(:terminal_inactivity_minutes),
+      drain_timeout_minutes: opts.fetch(:shutdown_drain_timeout_minutes),
+      reason: "afio_campaign_#{summary.fetch('status')}"
+    )
+    puts "RPOF terminal gate: #{handoff}" unless handoff.empty?
+  else
+    puts "RPOF terminal gate: skipped by --keep-fleet"
+  end
 
   case summary.fetch("status")
   when "completed" then exit 0

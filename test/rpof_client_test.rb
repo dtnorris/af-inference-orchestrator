@@ -88,6 +88,34 @@ class RpofClientTest < Minitest::Test
     assert_equal "", captured_stderr
   end
 
+  def test_terminal_shutdown_arms_selected_workers_with_default_gate_shape
+    args_path = File.join(@tmp, "args.txt")
+    File.write(@fake, <<~SH)
+      #!/bin/sh
+      set -eu
+      printf '%s\n' "$@" > #{args_path.inspect}
+      echo "fixture: terminal shutdown gate armed"
+    SH
+    FileUtils.chmod(0o755, @fake)
+    client = LocalModelEvaluation::RpofClient.new(repo_root: @tmp, executable: @fake)
+
+    output = client.terminal_shutdown(
+      fleet_key: "qwen",
+      worker_indices: [3, 1, 3],
+      inactivity_minutes: 5,
+      drain_timeout_minutes: 10,
+      reason: "afio_campaign_completed"
+    )
+
+    assert_includes output, "terminal shutdown gate armed"
+    args = File.readlines(args_path, chomp: true)
+    assert_equal [
+      "shutdown", "--fleet", "qwen", "--workers", "1,3", "--terminal",
+      "--inactive-minutes", "5.0", "--drain-timeout-minutes", "10.0",
+      "--reason", "afio_campaign_completed"
+    ], args
+  end
+
   def test_worker_selector_expands_ranges_without_sixteen_worker_ceiling
     assert_equal [1, 2, 3, 32], LocalModelEvaluation::RpofClient.expand_worker_selector("1-3,32")
   end

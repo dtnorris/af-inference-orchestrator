@@ -17,7 +17,7 @@ module LocalModelEvaluation
       with_json_file(request) do |request_path|
         Tempfile.create(["rpof-capability-result", ".json"]) do |result|
           result.close
-          stdout, stderr, status = Open3.capture3(
+          _stdout, stderr, status = Open3.capture3(
             @executable, "capability-check", "--request", request_path, "--output", result.path,
             chdir: @repo_root
           )
@@ -61,6 +61,29 @@ module LocalModelEvaluation
       end
     rescue JSON::ParserError => e
       raise Error, "RPOF dispatch summary is invalid JSON: #{e.message}"
+    end
+
+    def terminal_shutdown(fleet_key:, worker_indices:, inactivity_minutes: 5.0, drain_timeout_minutes: 10.0, reason: "afio_campaign_terminal")
+      indices = Array(worker_indices).map { |value| Integer(value) }.uniq.sort
+      raise Error, "terminal shutdown requires at least one worker" if indices.empty?
+      command = [
+        @executable, "shutdown",
+        "--fleet", fleet_key.to_s,
+        "--workers", indices.join(","),
+        "--terminal",
+        "--inactive-minutes", Float(inactivity_minutes).to_s,
+        "--drain-timeout-minutes", Float(drain_timeout_minutes).to_s,
+        "--reason", reason.to_s
+      ]
+      stdout, stderr, status = Open3.capture3(*command, chdir: @repo_root)
+      unless status.success?
+        detail = stderr.to_s.strip
+        detail = stdout.to_s.strip if detail.empty?
+        raise Error, "RPOF terminal shutdown handoff failed (exit #{status.exitstatus}): #{detail}"
+      end
+      stdout.to_s.strip
+    rescue ArgumentError, TypeError => e
+      raise Error, "invalid terminal shutdown request: #{e.message}"
     end
 
     def self.expand_worker_selector(value)
