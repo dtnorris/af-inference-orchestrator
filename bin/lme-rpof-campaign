@@ -134,6 +134,11 @@ begin
     exit 1
   end
 
+  selected_workers = capability.fetch("selected_worker_indices")
+  worker_labels = selected_workers.map { |index| "burst_#{index}" }.join(", ")
+  puts "RPOF capability check: PASS — fleet #{capability.fetch('fleet_id')}; workers #{worker_labels}"
+  $stdout.flush
+
   unless production_manifests.empty?
     puts "Source preflight: #{production_manifests.length} selected production manifest(s) from #{opts.fetch(:source_preflight_queue)}"
     source_ready = LocalModelEvaluation::ProductionBacklogSourcePreflight.new(root: ROOT).run(
@@ -146,12 +151,16 @@ begin
     end
   end
 
+  puts "RPOF dispatch starting: #{jobs.length} jobs across #{selected_workers.length} worker(s)"
+  puts "RPOF dispatch evidence: #{File.expand_path(opts.fetch(:output))}"
+  $stdout.flush
+
   dispatch_request = {
     "contract_version" => "afio-rpof-dispatch-request/v0.1",
     "target" => {
       "fleet_key" => opts.fetch(:fleet),
       "expected_fleet_id" => capability.fetch("fleet_id"),
-      "worker_indices" => capability.fetch("selected_worker_indices")
+      "worker_indices" => selected_workers
     },
     "group_by_affinity" => opts.fetch(:group_by_affinity),
     "jobs" => jobs
@@ -159,7 +168,8 @@ begin
   summary, _rpof_exit, stdout, stderr = client.dispatch(
     request: dispatch_request,
     workdir: opts.fetch(:workdir),
-    output_dir: opts.fetch(:output)
+    output_dir: opts.fetch(:output),
+    stream_output: true
   )
   $stdout.write(stdout) unless stdout.empty?
   $stderr.write(stderr) unless stderr.empty?

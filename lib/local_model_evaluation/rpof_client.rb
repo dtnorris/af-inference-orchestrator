@@ -34,13 +34,22 @@ module LocalModelEvaluation
       raise Error, "RPOF capability result is invalid JSON: #{e.message}"
     end
 
-    def dispatch(request:, workdir:, output_dir:)
+    def dispatch(request:, workdir:, output_dir:, stream_output: false)
       with_json_file(request) do |request_path|
-        stdout, stderr, status = Open3.capture3(
+        command = [
           @executable, "dispatch", "--request", request_path,
-          "--workdir", File.expand_path(workdir), "--output", File.expand_path(output_dir),
-          chdir: @repo_root
-        )
+          "--workdir", File.expand_path(workdir), "--output", File.expand_path(output_dir)
+        ]
+        if stream_output
+          system(*command, chdir: @repo_root)
+          status = $?
+          raise Error, "RPOF dispatch did not start" unless status
+
+          stdout = ""
+          stderr = ""
+        else
+          stdout, stderr, status = Open3.capture3(*command, chdir: @repo_root)
+        end
         raise Error, "RPOF dispatch rejected request (exit #{status.exitstatus}): #{stderr.strip}" if status.exitstatus == 2
         summary_path = File.join(File.expand_path(output_dir), "summary.json")
         raise Error, "RPOF dispatch did not write summary: #{stderr.strip}" unless File.file?(summary_path)
