@@ -1,0 +1,28 @@
+---
+# AFIO execution-pool policy is intentionally provider/hardware agnostic.
+# Worker counts and cost ceilings describe orchestration intent; RPOF owns
+# hardware qualification, provider capacity selection, and fleet mechanics.
+contract_version: afio-production-execution-pool-policy/v0.1
+required_context_length: 131072
+max_total_hourly_usd: 6.0
+pools:
+  qwen35:
+    model_ref: qwen
+    desired_workers: 4
+    minimum_workers: 2
+    max_pool_hourly_usd: 3.0
+  qwen27:
+    model_ref: qwen27
+    desired_workers: 2
+    minimum_workers: 1
+    max_pool_hourly_usd: 3.0
+  gemma4:
+    model_ref: gemma
+    desired_workers: 2
+    minimum_workers: 1
+    max_pool_hourly_usd: 3.0
+  gpt-oss:
+    model_ref: gptoss
+    desired_workers: 2
+    minimum_workers: 1
+    max_pool_hourly_usd: 3.0
