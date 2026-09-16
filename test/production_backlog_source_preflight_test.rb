@@ -63,6 +63,52 @@ class ProductionBacklogSourcePreflightTest < Minitest::Test
     assert_empty err.string
   end
 
+  def test_explicit_manifest_selection_checks_only_selected_entries_in_frozen_order
+    first = write_manifest("first", "Combat Emphasis", "ADV-0401")
+    second = write_manifest("second", "Combat Emphasis", "ADV-0402")
+    third = write_manifest("third", "Combat Emphasis", "ADV-0403")
+    write_order(first, second, third)
+
+    calls = []
+    out = StringIO.new
+    ok = LocalModelEvaluation::ProductionBacklogSourcePreflight.new(
+      root: @root,
+      io: out,
+      err: StringIO.new,
+      command_runner: lambda do |env, command, chdir|
+        calls << [env, command, chdir]
+        ["ok", "", FakeStatus.new(true)]
+      end
+    ).run("production_backlog/queue", manifest_entries: [third, first])
+
+    assert ok
+    assert_equal %w[ADV-0401 ADV-0403], calls.map { |_env, command, _chdir| command.fetch(6) }
+    refute_includes out.string, File.basename(second)
+    assert_match(/2 unique source contexts checked/, out.string)
+  end
+
+  def test_explicit_manifest_selection_rejects_entries_outside_frozen_run_order
+    included = write_manifest("included", "Combat Emphasis", "ADV-0411")
+    outside = write_manifest("outside", "Combat Emphasis", "ADV-0412")
+    write_order(included)
+
+    calls = []
+    err = StringIO.new
+    ok = LocalModelEvaluation::ProductionBacklogSourcePreflight.new(
+      root: @root,
+      io: StringIO.new,
+      err: err,
+      command_runner: lambda do |*args|
+        calls << args
+        ["ok", "", FakeStatus.new(true)]
+      end
+    ).run("production_backlog/queue", manifest_entries: [outside])
+
+    refute ok
+    assert_empty calls
+    assert_match(/not present in frozen run order/, err.string)
+  end
+
   def test_fails_closed_when_active_scorer_cannot_resolve_a_source
     first = write_manifest("levels", "Levels", "ADV-0059")
     write_order(first)

@@ -115,4 +115,38 @@ class RpofCampaignTest < Minitest::Test
     assert_equal "fixture-job", dispatch.dig("jobs", 0, "job_id")
     assert File.file?(capability_output)
   end
+
+  def test_production_remote_jobs_require_source_preflight_queue
+    jobs_path = File.join(@tmp, "production-jobs.json")
+    output = File.join(@tmp, "production-evidence")
+    File.write(jobs_path, JSON.dump(
+      "jobs" => [{
+        "job_id" => "production-0001",
+        "argv" => [
+          "bin/lme-production-remote-job",
+          "experiments/production-backlog-031/production-backlog-031-gptoss-ee-adv0783-v1.yml"
+        ]
+      }]
+    ))
+
+    stdout, stderr, status = Open3.capture3(
+      {
+        "RPOF_EXECUTABLE" => @fake,
+        "CAPTURE_ROOT" => @tmp
+      },
+      RbConfig.ruby,
+      SCRIPT,
+      "--workers", "1-2",
+      "--fleet", "fixture",
+      "--model", "gpt-oss:20b",
+      "--context", "131072",
+      "--jobs", jobs_path,
+      "--workdir", @tmp,
+      "--output", output
+    )
+
+    refute status.success?, stdout + stderr
+    assert_includes stderr, "production remote campaign jobs require --source-preflight-queue QUEUE"
+    refute File.exist?(File.join(@tmp, "capability-check.json"))
+  end
 end

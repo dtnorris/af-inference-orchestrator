@@ -16,7 +16,7 @@ module LocalModelEvaluation
       @command_runner = command_runner || method(:capture3)
     end
 
-    def run(queue_arg)
+    def run(queue_arg, manifest_entries: nil)
       previous_lme_repo = ENV["LME_REPO"]
       ENV["LME_REPO"] = @root if previous_lme_repo.to_s.empty?
 
@@ -25,8 +25,9 @@ module LocalModelEvaluation
       raise ArgumentError, "missing run order: #{order_path}" unless File.file?(order_path)
 
       models = Config.load_yaml(File.join(@root, "config", "models.yml")).fetch("models")
-      manifest_paths = File.readlines(order_path, chomp: true).reject(&:empty?)
-      raise ArgumentError, "run order is empty: #{order_path}" if manifest_paths.empty?
+      frozen_manifest_paths = File.readlines(order_path, chomp: true).reject(&:empty?)
+      raise ArgumentError, "run order is empty: #{order_path}" if frozen_manifest_paths.empty?
+      manifest_paths = select_manifest_paths(frozen_manifest_paths, manifest_entries)
 
       seen = {}
       failures = []
@@ -103,6 +104,36 @@ module LocalModelEvaluation
     end
 
     private
+
+    def select_manifest_paths(frozen_manifest_paths, manifest_entries)
+      return frozen_manifest_paths if manifest_entries.nil?
+
+      requested = Array(manifest_entries).map(&:to_s)
+      if requested.empty? || requested.any?(&:empty?)
+        raise ArgumentError, "source preflight manifest selection is empty"
+      end
+
+      requested_expanded = requested.map { |entry| File.expand_path(entry, @root) }
+      if requested_expanded.uniq.length != requested_expanded.length
+        raise ArgumentError, "source preflight manifest selection contains duplicates"
+      end
+
+      frozen_expanded = frozen_manifest_paths.to_h do |entry|
+        [File.expand_path(entry, @root), entry]
+      end
+      unknown = requested.reject do |entry|
+        frozen_expanded.key?(File.expand_path(entry, @root))
+      end
+      unless unknown.empty?
+        raise ArgumentError,
+              "source preflight manifest selection is not present in frozen run order: #{unknown.join(', ')}"
+      end
+
+      selected = requested_expanded.to_h { |entry| [entry, true] }
+      frozen_manifest_paths.select do |entry|
+        selected.key?(File.expand_path(entry, @root))
+      end
+    end
 
     def capture3(env, command, chdir)
       Open3.capture3(env, *command, chdir: chdir)

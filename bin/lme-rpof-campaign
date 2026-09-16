@@ -8,6 +8,7 @@ require "optparse"
 ROOT = File.expand_path(ENV.fetch("LME_REPO", File.expand_path("..", __dir__)))
 ENV["LME_REPO"] = ROOT
 $LOAD_PATH.unshift File.join(ROOT, "lib")
+require "local_model_evaluation/production_backlog_source_preflight"
 require "local_model_evaluation/rpof_client"
 
 opts = {
@@ -22,6 +23,7 @@ opts = {
   workdir: nil,
   output: nil,
   capability_output: nil,
+  source_preflight_queue: nil,
   group_by_affinity: false
 }
 parser = OptionParser.new do |o|
@@ -41,6 +43,7 @@ parser = OptionParser.new do |o|
   o.on("--workdir DIR", "Opaque RPOF workload working directory") { |v| opts[:workdir] = v }
   o.on("--output DIR", "RPOF generic dispatch evidence directory") { |v| opts[:output] = v }
   o.on("--capability-output FILE", "Persist the generic capability result") { |v| opts[:capability_output] = v }
+  o.on("--source-preflight-queue QUEUE", "Frozen production queue used to source-preflight selected production jobs") { |v| opts[:source_preflight_queue] = v }
   o.on("--group-by-affinity", "Request stable generic affinity grouping") { opts[:group_by_affinity] = true }
 end
 
@@ -76,6 +79,24 @@ begin
   jobs_document = JSON.parse(File.read(File.expand_path(opts.fetch(:jobs))))
   jobs = jobs_document.fetch("jobs")
   raise ArgumentError, "jobs must be a non-empty array" unless jobs.is_a?(Array) && !jobs.empty?
+  production_manifests = jobs.filter_map do |job|
+    argv = job["argv"]
+    next unless argv.is_a?(Array) && argv.first.to_s == "bin/lme-production-remote-job"
+
+    unless argv.length == 2 && !argv.fetch(1).to_s.empty?
+      raise ArgumentError,
+            "production remote campaign job #{job.fetch('job_id', '?')} must use argv " \
+            "[\"bin/lme-production-remote-job\", MANIFEST]"
+    end
+    argv.fetch(1).to_s
+  end
+  if production_manifests.any? && opts[:source_preflight_queue].to_s.empty?
+    raise ArgumentError, "production remote campaign jobs require --source-preflight-queue QUEUE"
+  end
+  if opts[:source_preflight_queue] && production_manifests.empty?
+    raise ArgumentError,
+          "--source-preflight-queue requires at least one bin/lme-production-remote-job job"
+  end
 
   selector = if opts[:all]
                { "mode" => "all" }
@@ -111,6 +132,18 @@ begin
     failures = capability.fetch("diagnostics").select { |row| row["status"] == "FAIL" }
     warn "ERROR: RPOF capability check failed: #{failures.map { |row| "#{row['code']}: #{row['detail']}" }.join('; ')}"
     exit 1
+  end
+
+  unless production_manifests.empty?
+    puts "Source preflight: #{production_manifests.length} selected production manifest(s) from #{opts.fetch(:source_preflight_queue)}"
+    source_ready = LocalModelEvaluation::ProductionBacklogSourcePreflight.new(root: ROOT).run(
+      opts.fetch(:source_preflight_queue),
+      manifest_entries: production_manifests
+    )
+    unless source_ready
+      warn "ERROR: selected production source preflight failed; no dispatch was started."
+      exit 1
+    end
   end
 
   dispatch_request = {
