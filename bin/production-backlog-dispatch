@@ -9,5 +9,11 @@ runtime_max_tokens = ARGV.shift
 repo_root = ENV.fetch("LME_REPO", File.expand_path("..", __dir__))
 
 adapter = ProductionBacklogDispatch::SystemCommandAdapter.new(repo_root:)
-runner = ProductionBacklogDispatch::Runner.new(command_adapter: adapter)
-exit(runner.dispatch(manifest:, runtime_max_tokens:) ? 0 : 1)
+guard = ProductionBacklogDispatch::LocalQualifiedArtifactGuard.new(repo_root:)
+runner = ProductionBacklogDispatch::Runner.new(command_adapter: adapter, artifact_guard: guard)
+begin
+  exit(runner.dispatch(manifest:, runtime_max_tokens:) ? 0 : 1)
+rescue ProductionBacklogDispatch::QualificationError => e
+  warn "ERROR: #{e.message}"
+  exit 1
+end
