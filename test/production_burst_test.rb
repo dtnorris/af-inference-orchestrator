@@ -121,67 +121,147 @@ class ProductionBurstTest < Minitest::Test
   end
 
   def fake_fulfill
-    executable("bin/lme-production-pool-fulfill", <<~'RUBY')
-      #!/usr/bin/env ruby
-      require "digest"
-      require "fileutils"
-      require "json"
-      root = ENV.fetch("LME_REPO")
-      plan_path = File.expand_path(ARGV.shift, root)
-      pool = ARGV.fetch(ARGV.index("--pool") + 1)
-      output = File.expand_path(ARGV.fetch(ARGV.index("--output") + 1), root)
-      dry = ARGV.include?("--dry-run")
-      File.open(File.join(root, "fulfill-calls.txt"), "a") { |file| file.puts pool }
-      plan_sha = Digest::SHA256.file(plan_path).hexdigest
-      fail_pool = ENV["FIXTURE_FAIL_POOL"].to_s
-      ready = !dry && pool != fail_pool
-      result = {
-        "contract_version" => "afio-rpof-execution-pool-fulfill-result/v0.1",
-        "ready" => ready,
-        "status" => dry ? "planned" : (ready ? "ready" : "unfulfilled"),
-        "plan_sha256" => plan_sha,
-        "pool_id" => pool,
-        "execution_handle" => "ep-#{pool}",
-        "worker_indices" => ready ? [1] : [],
-        "detail" => ready ? "ready" : (dry ? "planned" : "fixture unavailable")
-      }
-      handoff = {
-        "contract_version" => "afio-production-execution-pool-handoff/v0.1",
-        "plan" => { "path" => plan_path, "sha256" => plan_sha },
-        "pool_id" => pool,
-        "request" => {},
-        "result" => result
-      }
-      FileUtils.mkdir_p(File.dirname(output))
-      File.write(output, JSON.pretty_generate(handoff) + "\n")
-      exit(ready || dry ? 0 : 1)
-    RUBY
+    executable("bin/lme-production-pool-fulfill", <<~'SH')
+      #!/bin/sh
+      set -eu
+
+      root=${LME_REPO:?}
+      plan_arg=$1
+      shift
+      case "$plan_arg" in
+        /*) plan_path=$plan_arg ;;
+        *) plan_path="$root/$plan_arg" ;;
+      esac
+
+      pool=
+      output_arg=
+      dry=false
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --pool)
+            pool=$2
+            shift 2
+            ;;
+          --output)
+            output_arg=$2
+            shift 2
+            ;;
+          --dry-run)
+            dry=true
+            shift
+            ;;
+          *)
+            shift
+            ;;
+        esac
+      done
+      case "$output_arg" in
+        /*) output=$output_arg ;;
+        *) output="$root/$output_arg" ;;
+      esac
+
+      printf '%s\n' "$pool" >> "$root/fulfill-calls.txt"
+      if command -v sha256sum >/dev/null 2>&1; then
+        plan_sha=$(sha256sum "$plan_path")
+      else
+        plan_sha=$(shasum -a 256 "$plan_path")
+      fi
+      plan_sha=${plan_sha%% *}
+
+      fail_pool=${FIXTURE_FAIL_POOL:-}
+      if [ "$dry" = true ]; then
+        ready=false
+        status=planned
+        worker_indices='[]'
+        detail=planned
+        exit_status=0
+      elif [ "$pool" = "$fail_pool" ]; then
+        ready=false
+        status=unfulfilled
+        worker_indices='[]'
+        detail='fixture unavailable'
+        exit_status=1
+      else
+        ready=true
+        status=ready
+        worker_indices='[1]'
+        detail=ready
+        exit_status=0
+      fi
+
+      output_dir=${output%/*}
+      [ "$output_dir" = "$output" ] && output_dir=.
+      mkdir -p "$output_dir"
+      printf '%s\n' \
+        '{' \
+        '  "contract_version": "afio-production-execution-pool-handoff/v0.1",' \
+        "  \"plan\": { \"path\": \"$plan_path\", \"sha256\": \"$plan_sha\" }," \
+        "  \"pool_id\": \"$pool\"," \
+        '  "request": {},' \
+        '  "result": {' \
+        '    "contract_version": "afio-rpof-execution-pool-fulfill-result/v0.1",' \
+        "    \"ready\": $ready," \
+        "    \"status\": \"$status\"," \
+        "    \"plan_sha256\": \"$plan_sha\"," \
+        "    \"pool_id\": \"$pool\"," \
+        "    \"execution_handle\": \"ep-$pool\"," \
+        "    \"worker_indices\": $worker_indices," \
+        "    \"detail\": \"$detail\"" \
+        '  }' \
+        '}' > "$output"
+      exit "$exit_status"
+    SH
   end
 
   def fake_campaign
-    executable("bin/lme-rpof-campaign", <<~'RUBY')
-      #!/usr/bin/env ruby
-      require "fileutils"
-      require "json"
-      root = ENV.fetch("LME_REPO")
-      fleet = ARGV.fetch(ARGV.index("--fleet") + 1)
-      pool = fleet.sub(/\Aep-/, "")
-      output = ARGV.fetch(ARGV.index("--output") + 1)
-      File.open(File.join(root, "campaign-launches.txt"), "a") { |file| file.puts pool }
-      FileUtils.mkdir_p(output)
-      status = ENV["FIXTURE_WORKLOAD_FAIL_POOL"].to_s == pool ? "workload_failed" : "completed"
-      File.write(
-        File.join(output, "summary.json"),
-        JSON.pretty_generate(
-          "contract_version" => "afio-rpof-dispatch-summary/v0.1",
-          "status" => status,
-          "job_count" => 1,
-          "completed_count" => status == "completed" ? 1 : 0,
-          "failed_count" => status == "workload_failed" ? 1 : 0
-        ) + "\n"
-      )
-      exit(status == "completed" ? 0 : 2)
-    RUBY
+    executable("bin/lme-rpof-campaign", <<~'SH')
+      #!/bin/sh
+      set -eu
+
+      root=${LME_REPO:?}
+      fleet=
+      output=
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --fleet)
+            fleet=$2
+            shift 2
+            ;;
+          --output)
+            output=$2
+            shift 2
+            ;;
+          *)
+            shift
+            ;;
+        esac
+      done
+
+      pool=${fleet#ep-}
+      printf '%s\n' "$pool" >> "$root/campaign-launches.txt"
+      mkdir -p "$output"
+      if [ "${FIXTURE_WORKLOAD_FAIL_POOL:-}" = "$pool" ]; then
+        status=workload_failed
+        completed_count=0
+        failed_count=1
+        exit_status=2
+      else
+        status=completed
+        completed_count=1
+        failed_count=0
+        exit_status=0
+      fi
+
+      printf '%s\n' \
+        '{' \
+        '  "contract_version": "afio-rpof-dispatch-summary/v0.1",' \
+        "  \"status\": \"$status\"," \
+        '  "job_count": 1,' \
+        "  \"completed_count\": $completed_count," \
+        "  \"failed_count\": $failed_count" \
+        '}' > "$output/summary.json"
+      exit "$exit_status"
+    SH
   end
 
   def build_fixture
