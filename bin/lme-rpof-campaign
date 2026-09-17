@@ -119,6 +119,11 @@ begin
     row["expected_digest"] = opts[:expected_digests][name] if opts[:expected_digests].key?(name)
     row
   end
+  capability_contract = if models.all? { |row| row.key?("expected_digest") }
+                          "afio-rpof-capability-check-request/v0.2"
+                        else
+                          "afio-rpof-capability-check-request/v0.1"
+                        end
   requirements = {
     "models" => models,
     "required_context_length" => opts.fetch(:context),
@@ -128,7 +133,7 @@ begin
 
   client = LocalModelEvaluation::RpofClient.new(repo_root: ROOT)
   capability = client.capability_check(
-    "contract_version" => "afio-rpof-capability-check-request/v0.1",
+    "contract_version" => capability_contract,
     "fleet_key" => opts.fetch(:fleet),
     "worker_selector" => selector,
     "requirements" => requirements

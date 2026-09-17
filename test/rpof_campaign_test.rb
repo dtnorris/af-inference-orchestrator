@@ -108,7 +108,7 @@ class RpofCampaignTest < Minitest::Test
 
     assert status.success?, stdout + stderr
     capability = JSON.parse(File.read(File.join(@tmp, "capability-check.json")))
-    assert_equal "afio-rpof-capability-check-request/v0.1", capability.fetch("contract_version")
+    assert_equal "afio-rpof-capability-check-request/v0.2", capability.fetch("contract_version")
     assert_equal "fixture", capability.fetch("fleet_key")
     assert_equal [1, 2], capability.dig("worker_selector", "indices")
     assert_equal DIGEST, capability.dig("requirements", "models", 0, "expected_digest")
