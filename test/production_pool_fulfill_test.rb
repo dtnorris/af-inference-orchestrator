@@ -8,6 +8,7 @@ require "open3"
 require "rbconfig"
 require "digest"
 require "yaml"
+require_relative "../lib/local_model_evaluation/production_pool_qualification"
 
 class ProductionPoolFulfillTest < Minitest::Test
   ROOT = File.expand_path("..", __dir__)
@@ -17,6 +18,7 @@ class ProductionPoolFulfillTest < Minitest::Test
     @tmp = Dir.mktmpdir("afio-pool-fulfill-")
     copy("bin/lme-production-pool-fulfill")
     copy("lib/local_model_evaluation/rpof_client.rb")
+    copy("lib/local_model_evaluation/production_pool_qualification.rb")
     write_model_config
     fake_rpof
     @plan_path = File.join(@tmp, "output", "plan.json")
@@ -105,7 +107,7 @@ class ProductionPoolFulfillTest < Minitest::Test
     assert_includes err, "use --dry-run or --yes"
   end
 
-  def test_rejects_stale_or_dequalified_plan_identity_before_rpof
+  def test_rejects_stale_or_dequalified_plan_identity_in_process
     cases = {
       "model_ref" => lambda do |plan_document, _models|
         plan_document.fetch("pools").first["model_ref"] = "retired-qwen"
@@ -125,27 +127,40 @@ class ProductionPoolFulfillTest < Minitest::Test
       plan_document = plan
       models = model_config_document
       mutate.call(plan_document, models)
-      File.write(@plan_path, JSON.pretty_generate(plan_document) + "\n")
       File.write(model_config_path, YAML.dump(models))
-      FileUtils.rm_f(File.join(@tmp, "captured-args.txt"))
-      FileUtils.rm_f(File.join(@tmp, "captured-request.json"))
 
-      output = "output/rejected-#{field}.json"
-      out, err, status = Open3.capture3(
-        { "LME_REPO" => @tmp },
-        RbConfig.ruby,
-        File.join(@tmp, "bin", "lme-production-pool-fulfill"),
-        "output/plan.json",
-        "--pool", "qwen35",
-        "--output", output,
-        "--dry-run"
-      )
-
-      refute status.success?, "#{field} unexpectedly accepted:\n#{out}\n#{err}"
-      assert_includes err, field
-      refute File.exist?(File.join(@tmp, "captured-args.txt")), "#{field} reached RPOF"
-      refute File.exist?(File.join(@tmp, output)), "#{field} wrote a fulfillment handoff"
+      error = assert_raises(RuntimeError, "#{field} unexpectedly accepted") do
+        LocalModelEvaluation::ProductionPoolQualification.verify_current_qualification!(
+          plan_document.fetch("pools").first,
+          models_path: model_config_path
+        )
+      end
+      assert_includes error.message, field
     end
+  end
+
+  def test_cli_fails_closed_on_stale_qualification_before_rpof
+    models = model_config_document
+    models.fetch("models").fetch("qwen")["qualified_manifest_sha256"] = "b" * 64
+    File.write(model_config_path, YAML.dump(models))
+    FileUtils.rm_f(File.join(@tmp, "captured-args.txt"))
+    FileUtils.rm_f(File.join(@tmp, "captured-request.json"))
+
+    output = "output/rejected-expected-digest.json"
+    out, err, status = Open3.capture3(
+      { "LME_REPO" => @tmp },
+      RbConfig.ruby,
+      File.join(@tmp, "bin", "lme-production-pool-fulfill"),
+      "output/plan.json",
+      "--pool", "qwen35",
+      "--output", output,
+      "--dry-run"
+    )
+
+    refute status.success?, "stale qualification unexpectedly accepted:\n#{out}\n#{err}"
+    assert_includes err, "expected_digest"
+    refute File.exist?(File.join(@tmp, "captured-args.txt")), "stale qualification reached RPOF"
+    refute File.exist?(File.join(@tmp, output)), "stale qualification wrote a fulfillment handoff"
   end
 
   private
@@ -222,43 +237,71 @@ class ProductionPoolFulfillTest < Minitest::Test
 
   def fake_rpof
     path = File.join(@tmp, "bin", "lme-rpof")
-    File.write(path, <<~'RUBY')
-      #!/usr/bin/env ruby
-      require "json"
-      root = ENV.fetch("LME_REPO")
-      command = ARGV.shift
-      abort "unexpected command #{command}" unless command == "execution-pool-fulfill"
-      File.write(File.join(root, "captured-args.txt"), ARGV.join("\n") + "\n")
-      request_path = ARGV.fetch(ARGV.index("--request") + 1)
-      output_path = ARGV.fetch(ARGV.index("--output") + 1)
-      request = JSON.parse(File.read(request_path))
-      File.write(File.join(root, "captured-request.json"), JSON.pretty_generate(request) + "\n")
-      dry_run = ARGV.include?("--dry-run")
-      result = {
-        "contract_version" => "afio-rpof-execution-pool-fulfill-result/v0.1",
-        "ready" => !dry_run,
-        "status" => dry_run ? "planned" : "ready",
-        "plan_sha256" => request.fetch("plan_sha256"),
-        "pool_id" => request.fetch("pool_id"),
-        "execution_handle" => "opaque-#{request.fetch('pool_id')}",
-        "worker_indices" => dry_run ? [] : [1, 2],
-        "requirements" => request.fetch("requirements"),
-        "capacity" => {
-          "status" => dry_run ? "planned" : "minimum_met",
-          "desired_workers" => request.dig("capacity", "desired_workers"),
-          "minimum_workers" => request.dig("capacity", "minimum_workers"),
-          "initial_workers" => 0,
-          "final_workers" => dry_run ? 0 : 2,
-          "max_pool_hourly_usd" => request.dig("capacity", "max_pool_hourly_usd"),
-          "max_total_hourly_usd" => request.dig("capacity", "max_total_hourly_usd")
-        },
-        "hardware_policy" => { "cloud" => "SECURE", "qualified_gpu_ids" => ["fixture"] },
-        "runtime_alias_evidence" => [],
-        "capabilities" => nil,
-        "detail" => dry_run ? "fixture plan" : "fixture ready"
+    File.write(path, <<~'SH')
+      #!/bin/sh
+      set -eu
+
+      root=${LME_REPO:?}
+      command=$1
+      shift
+      if [ "$command" != "execution-pool-fulfill" ]; then
+        echo "unexpected command $command" >&2
+        exit 1
+      fi
+
+      printf '%s\n' "$@" > "$root/captured-args.txt"
+      request_path=
+      output_path=
+      dry_run=false
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --request)
+            request_path=$2
+            shift 2
+            ;;
+          --output)
+            output_path=$2
+            shift 2
+            ;;
+          --dry-run)
+            dry_run=true
+            shift
+            ;;
+          --yes)
+            shift
+            ;;
+          *)
+            shift
+            ;;
+        esac
+      done
+
+      cp "$request_path" "$root/captured-request.json"
+      plan_sha256=$(sed -n 's/^[[:space:]]*"plan_sha256": "\([^"]*\)".*/\1/p' "$request_path" | head -n 1)
+      pool_id=$(sed -n 's/^[[:space:]]*"pool_id": "\([^"]*\)".*/\1/p' "$request_path" | head -n 1)
+
+      if [ "$dry_run" = true ]; then
+        ready=false
+        status=planned
+        worker_indices='[]'
+      else
+        ready=true
+        status=ready
+        worker_indices='[1, 2]'
+      fi
+
+      cat > "$output_path" <<EOF
+      {
+        "contract_version": "afio-rpof-execution-pool-fulfill-result/v0.1",
+        "ready": $ready,
+        "status": "$status",
+        "plan_sha256": "$plan_sha256",
+        "pool_id": "$pool_id",
+        "execution_handle": "opaque-$pool_id",
+        "worker_indices": $worker_indices
       }
-      File.write(output_path, JSON.pretty_generate(result) + "\n")
-    RUBY
+      EOF
+    SH
     FileUtils.chmod(0o755, path)
   end
 end

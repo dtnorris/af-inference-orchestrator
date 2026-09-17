@@ -6,11 +6,11 @@ require "fileutils"
 require "json"
 require "optparse"
 require "pathname"
-require "yaml"
 
 ROOT = File.expand_path(ENV.fetch("LME_REPO", File.expand_path("..", __dir__)))
 $LOAD_PATH.unshift File.join(ROOT, "lib")
 require "local_model_evaluation/rpof_client"
+require "local_model_evaluation/production_pool_qualification"
 
 PLAN_CONTRACT = "afio-production-execution-pool-plan/v0.1"
 REQUEST_CONTRACT = "afio-rpof-execution-pool-fulfill-request/v0.1"
@@ -59,55 +59,6 @@ rescue ArgumentError
   path
 end
 
-def verify_current_qualification!(pool)
-  model_ref = pool.fetch("model_ref").to_s.strip
-  raise "execution pool has an empty model_ref" if model_ref.empty?
-
-  requirements = pool.fetch("requirements")
-  planned = {
-    "ollama_model" => requirements.fetch("ollama_model").to_s,
-    "pull_model" => requirements.fetch("pull_model").to_s,
-    "expected_digest" => requirements.fetch("expected_digest").to_s.downcase
-  }
-
-  models_path = File.join(ROOT, "config", "models.yml")
-  document = YAML.safe_load_file(models_path, aliases: true) || {}
-  models = document.fetch("models")
-  raise "current model config models must be a mapping" unless models.is_a?(Hash)
-  current_attrs = models[model_ref]
-  unless current_attrs.is_a?(Hash)
-    raise "current qualification does not match execution-pool plan: model_ref #{model_ref.inspect} is not currently qualified"
-  end
-
-  current = {
-    "ollama_model" => current_attrs["ollama_model"].to_s.strip,
-    "pull_model" => current_attrs["pull_model"].to_s.strip,
-    "expected_digest" => current_attrs["qualified_manifest_sha256"].to_s.strip.downcase
-  }
-  %w[ollama_model pull_model].each do |field|
-    if current.fetch(field).empty?
-      raise "current qualification for model_ref #{model_ref.inspect} is incomplete: #{field}"
-    end
-  end
-  unless current.fetch("expected_digest").match?(/\A[0-9a-f]{64}\z/)
-    raise "current qualification for model_ref #{model_ref.inspect} is incomplete: qualified_manifest_sha256"
-  end
-
-  mismatches = planned.each_with_object([]) do |(field, planned_value), rows|
-    current_value = current.fetch(field)
-    next if current_value == planned_value
-
-    rows << "#{field} plan=#{planned_value.inspect} current=#{current_value.inspect}"
-  end
-  unless mismatches.empty?
-    raise "current qualification does not match execution-pool plan for model_ref #{model_ref.inspect}: #{mismatches.join('; ')}"
-  end
-
-  current
-rescue Psych::Exception, SystemCallError => e
-  raise "cannot verify current qualified model configuration: #{e.message}"
-end
-
 begin
   plan_path = within_root(plan_arg)
   raise "execution-pool plan not found: #{plan_path}" unless File.file?(plan_path)
@@ -122,7 +73,10 @@ begin
   raise "execution pool #{pool_id.inspect} is not present in #{relative_path(plan_path)}" unless pool
 
   requirements = pool.fetch("requirements")
-  verify_current_qualification!(pool)
+  LocalModelEvaluation::ProductionPoolQualification.verify_current_qualification!(
+    pool,
+    models_path: File.join(ROOT, "config", "models.yml")
+  )
   capacity = pool.fetch("capacity")
   request = {
     "contract_version" => REQUEST_CONTRACT,
