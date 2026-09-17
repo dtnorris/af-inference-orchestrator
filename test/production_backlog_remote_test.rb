@@ -120,15 +120,28 @@ class ProductionBacklogRemoteTest < Minitest::Test
     assert_equal %w[model:qwen model:gptoss], jobs.map { |job| job.fetch("affinity") }
 
     capability = JSON.parse(File.read(File.join(@root, "capability-request.json")))
-    assert_equal "afio-rpof-capability-check-request/v0.1", capability.fetch("contract_version")
+    assert_equal "afio-rpof-capability-check-request/v0.2", capability.fetch("contract_version")
     assert_equal "default", capability.fetch("fleet_key")
     assert_equal({ "mode" => "all" }, capability.fetch("worker_selector"))
     assert_equal(
-      %w[qwen3.6:35b-a3b gpt-oss:20b],
-      capability.dig("requirements", "models").map { |model| model.fetch("name") }
+      [
+        {
+          "name" => "qwen3.6:35b-a3b",
+          "expected_digest" => "07d35212591fc27746f0a317c975a6d68754fb38e9053d82e25f06057af28522"
+        },
+        {
+          "name" => "gpt-oss:20b",
+          "expected_digest" => "17052f91a42e97930aa6e28a6c6c06a983e6a58dbb00434885a0cf5313e376f7"
+        }
+      ],
+      capability.dig("requirements", "models")
     )
     assert_equal 131_072, capability.dig("requirements", "required_context_length")
     assert_equal true, capability.dig("requirements", "require_fully_gpu_resident")
+    assert_includes out, "qwen: runtime=qwen3.6:35b-a3b"
+    assert_includes out, "digest=07d35212591fc27746f0a317c975a6d68754fb38e9053d82e25f06057af28522"
+    assert_includes out, "gptoss: runtime=gpt-oss:20b"
+    assert_includes out, "digest=17052f91a42e97930aa6e28a6c6c06a983e6a58dbb00434885a0cf5313e376f7"
 
     dispatch = JSON.parse(File.read(File.join(@root, "dispatch-request.json")))
     assert_equal "afio-rpof-dispatch-request/v0.1", dispatch.fetch("contract_version")
@@ -141,6 +154,33 @@ class ProductionBacklogRemoteTest < Minitest::Test
     env = JSON.parse(File.read(File.join(@root, "dispatch-env.json")))
     assert_equal "phase6-v0.3", env.fetch("social")
     assert_equal "phase6-v0.4", env.fetch("investigation")
+  end
+
+  def test_remote_campaign_fails_closed_when_qualified_identity_is_incomplete
+    executable("bin/verify-production-backlog", "#!/bin/sh\nexit 0\n")
+    executable("bin/preflight-production-backlog-sources", "#!/bin/sh\nexit 0\n")
+
+    models_path = File.join(@root, "config", "models.yml")
+    config = YAML.safe_load_file(models_path)
+    config.fetch("models").fetch("qwen").delete("pull_model")
+    File.write(models_path, YAML.dump(config))
+
+    manifest("experiments/incomplete.yml", dimension: "Combat Emphasis")
+    queue = queue_for(["experiments/incomplete.yml"])
+
+    out, err, status = Open3.capture3(
+      { "LME_REPO" => @root },
+      RbConfig.ruby,
+      File.join(@root, "bin", "lme-production-backlog-remote"),
+      queue,
+      "--all",
+      "--output", "output/incomplete"
+    )
+
+    refute status.success?, out + err
+    assert_includes err, "remote production bridge requires complete qualified model identity"
+    assert_includes err, "pull_model"
+    refute File.exist?(File.join(@root, "output", "incomplete.jobs.json"))
   end
 
   def test_remote_job_remaps_only_mac_endpoint_and_clears_inherited_token_override

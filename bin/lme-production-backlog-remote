@@ -94,13 +94,29 @@ end
 
 model_config = YAML.safe_load_file(File.join(ROOT, "config", "models.yml"), aliases: true).fetch("models")
 begin
-  required_ollama_models = model_aliases.uniq.map do |alias_name|
-    model_config.fetch(alias_name).fetch("ollama_model").to_s
+  qualified_models = model_aliases.uniq.map do |alias_name|
+    attrs = model_config.fetch(alias_name)
+    ollama_model = attrs.fetch("ollama_model").to_s.strip
+    pull_model = attrs.fetch("pull_model").to_s.strip
+    digest = attrs.fetch("qualified_manifest_sha256").to_s.strip.downcase
+
+    raise KeyError, "model #{alias_name.inspect} has empty ollama_model" if ollama_model.empty?
+    raise KeyError, "model #{alias_name.inspect} has empty pull_model" if pull_model.empty?
+    unless digest.match?(/\A[0-9a-f]{64}\z/)
+      raise KeyError, "model #{alias_name.inspect} has invalid qualified_manifest_sha256"
+    end
+
+    {
+      "model_ref" => alias_name,
+      "ollama_model" => ollama_model,
+      "pull_model" => pull_model,
+      "expected_digest" => digest
+    }
   end
 rescue KeyError => e
-  abort "ERROR: remote production bridge cannot resolve frozen model alias: #{e.message}"
+  abort "ERROR: remote production bridge requires complete qualified model identity: #{e.message}"
 end
-abort "ERROR: remote production bridge resolved no Ollama models" if required_ollama_models.empty?
+abort "ERROR: remote production bridge resolved no qualified models" if qualified_models.empty?
 
 output_dir = File.expand_path(opts.fetch(:output), ROOT)
 jobs_path = "#{output_dir}.jobs.json"
@@ -133,11 +149,16 @@ worker_selector = if opts[:all]
                   end
 client = LocalModelEvaluation::RpofClient.new(repo_root: ROOT)
 capability_request = {
-  "contract_version" => "afio-rpof-capability-check-request/v0.1",
+  "contract_version" => "afio-rpof-capability-check-request/v0.2",
   "fleet_key" => fleet_key,
   "worker_selector" => worker_selector,
   "requirements" => {
-    "models" => required_ollama_models.map { |name| { "name" => name } },
+    "models" => qualified_models.map do |model|
+      {
+        "name" => model.fetch("ollama_model"),
+        "expected_digest" => model.fetch("expected_digest")
+      }
+    end,
     "required_context_length" => opts.fetch(:context),
     "require_fully_gpu_resident" => true
   }
@@ -170,6 +191,10 @@ puts "  Frozen manifests: #{jobs.length}"
 puts "  Dispatch evidence: #{output_dir}"
 puts "  Job ledger: #{jobs_path}"
 puts "  Model grouping: #{opts[:group_by_model] ? 'enabled' : 'disabled (FIFO)'}"
+puts "  Qualified artifacts:"
+qualified_models.each do |model|
+  puts "    #{model.fetch('model_ref')}: runtime=#{model.fetch('ollama_model')} pull=#{model.fetch('pull_model')} digest=#{model.fetch('expected_digest')}"
+end
 puts "  RPOF fleet: #{fleet_key} / #{capability.fetch('fleet_id')}"
 puts "  RPOF workers: #{capability.fetch('selected_worker_indices').join(', ')}"
 puts "  Frozen manifests are read-only; remote routing is execution-time only."
