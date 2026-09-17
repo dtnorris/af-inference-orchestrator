@@ -94,6 +94,9 @@ class ProductionBurstTest < Minitest::Test
     )
 
     assert status.success?, out + err
+    assert_includes out, "qwen35: model_ref=qwen runtime=qwen3.6:35b-a3b digest=#{DIGEST}"
+    assert_includes out, "gemma4: model_ref=gemma runtime=gemma4:26b digest=#{DIGEST}"
+    assert_includes out, "gpt-oss: model_ref=gptoss runtime=gpt-oss:20b digest=#{DIGEST}"
     fulfilled = File.readlines(File.join(@tmp, "fulfill-calls.txt"), chomp: true)
     assert_equal %w[qwen35 gemma4 gpt-oss], fulfilled
     refute File.exist?(File.join(@tmp, "campaign-launches.txt"))

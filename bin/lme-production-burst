@@ -205,6 +205,10 @@ begin
   puts "  Plan: #{relative_path(plan_path)}"
   puts "  Plan SHA: #{plan_sha}"
   puts "  Pools: #{Array(plan.fetch('pools')).map { |pool| pool.fetch('pool_id') }.join(', ')}"
+  Array(plan.fetch("pools")).each do |pool|
+    requirements = pool.fetch("requirements")
+    puts "  #{pool.fetch('pool_id')}: model_ref=#{pool.fetch('model_ref')} runtime=#{requirements.fetch('ollama_model')} digest=#{requirements.fetch('expected_digest')}"
+  end
   puts format("  Aggregate hourly ceiling: $%.4f/hr", Float(plan.dig("capacity", "max_total_hourly_usd")))
   puts "  Failure policy: independent lanes continue; workload failures remain sticky."
   puts "  Acquisition policy: paid pool fulfillment is serialized; ready scoring lanes overlap."
