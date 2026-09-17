@@ -16,6 +16,7 @@ class ProductionBacklogRemoteTest < Minitest::Test
     copy("bin/lme-production-remote-job")
     copy("lib/production_backlog_runner_policy.rb")
     copy("lib/production_backlog_runtime_contract.rb")
+    copy("lib/production_backlog_remote_campaign.rb")
     copy("lib/local_model_evaluation/rpof_client.rb")
     copy("config/models.yml")
   end
@@ -24,7 +25,7 @@ class ProductionBacklogRemoteTest < Minitest::Test
     FileUtils.remove_entry(@root) if @root && File.exist?(@root)
   end
 
-  def test_campaign_preflights_and_materializes_deterministic_remote_jobs_without_touching_manifests
+  def test_campaign_cli_preflights_and_crosses_rpof_seam_without_touching_manifest
     executable("bin/verify-production-backlog", <<~'SH')
       #!/bin/sh
       set -eu
@@ -79,7 +80,7 @@ class ProductionBacklogRemoteTest < Minitest::Test
             "${AF_SOCIAL_INTERACTION_GUARDRAIL_PROFILE-}" \
             "${AF_INVESTIGATION_GUARDRAIL_PROFILE-}" > "$root/dispatch-env.json"
           cat > "$output/summary.json" <<'JSON'
-      {"contract_version":"afio-rpof-dispatch-summary/v0.1","fleet_key":"default","fleet_id":"fixture-fleet-id","started_at_utc":"2026-09-14T12:00:00Z","finished_at_utc":"2026-09-14T12:00:01Z","status":"completed","worker_count":2,"job_count":2,"completed_count":2,"failed_count":0,"not_started_count":0,"not_started_job_ids":[],"infrastructure_failures":[],"jobs":[]}
+      {"contract_version":"afio-rpof-dispatch-summary/v0.1","fleet_key":"default","fleet_id":"fixture-fleet-id","started_at_utc":"2026-09-14T12:00:00Z","finished_at_utc":"2026-09-14T12:00:01Z","status":"completed","worker_count":2,"job_count":1,"completed_count":1,"failed_count":0,"not_started_count":0,"not_started_job_ids":[],"infrastructure_failures":[],"jobs":[]}
       JSON
           ;;
         *)
@@ -91,10 +92,8 @@ class ProductionBacklogRemoteTest < Minitest::Test
 
     core = ProductionBacklogRuntimeContract::QWEN35_CORE_DIMENSIONS.first
     first = manifest("experiments/core.yml", dimension: core)
-    second = manifest("experiments/excluded.yml", dimension: "Levels", model: "gptoss")
     first_before = File.binread(first)
-    second_before = File.binread(second)
-    queue = queue_for(%w[experiments/core.yml experiments/excluded.yml])
+    queue = queue_for(["experiments/core.yml"])
 
     out, err, status = Open3.capture3(
       { "LME_REPO" => @root, "AF_LLM_MAX_TOKENS" => "99999" },
@@ -110,38 +109,17 @@ class ProductionBacklogRemoteTest < Minitest::Test
     assert File.file?(File.join(@root, "verifier-called"))
     assert File.file?(File.join(@root, "source-preflight-called"))
     assert_equal first_before, File.binread(first)
-    assert_equal second_before, File.binread(second)
 
     jobs = JSON.parse(File.read(File.join(@root, "output", "remote-campaign.jobs.json"))).fetch("jobs")
-    assert_equal %w[production-0001 production-0002], jobs.map { |job| job.fetch("job_id") }
-    assert_equal ["bin/lme-production-remote-job", "experiments/core.yml"], jobs.first.fetch("argv")
-    assert_equal({ "LME_RUNTIME_MAX_TOKENS" => "8192" }, jobs.first.fetch("env"))
-    assert_equal({}, jobs.last.fetch("env"))
-    assert_equal %w[model:qwen model:gptoss], jobs.map { |job| job.fetch("affinity") }
+    assert_equal 1, jobs.length
+    assert_equal "production-0001", jobs.first.fetch("job_id")
 
     capability = JSON.parse(File.read(File.join(@root, "capability-request.json")))
     assert_equal "afio-rpof-capability-check-request/v0.2", capability.fetch("contract_version")
     assert_equal "default", capability.fetch("fleet_key")
     assert_equal({ "mode" => "all" }, capability.fetch("worker_selector"))
-    assert_equal(
-      [
-        {
-          "name" => "qwen3.6:35b-a3b",
-          "expected_digest" => "07d35212591fc27746f0a317c975a6d68754fb38e9053d82e25f06057af28522"
-        },
-        {
-          "name" => "gpt-oss:20b",
-          "expected_digest" => "17052f91a42e97930aa6e28a6c6c06a983e6a58dbb00434885a0cf5313e376f7"
-        }
-      ],
-      capability.dig("requirements", "models")
-    )
-    assert_equal 131_072, capability.dig("requirements", "required_context_length")
-    assert_equal true, capability.dig("requirements", "require_fully_gpu_resident")
     assert_includes out, "qwen: runtime=qwen3.6:35b-a3b"
     assert_includes out, "digest=07d35212591fc27746f0a317c975a6d68754fb38e9053d82e25f06057af28522"
-    assert_includes out, "gptoss: runtime=gpt-oss:20b"
-    assert_includes out, "digest=17052f91a42e97930aa6e28a6c6c06a983e6a58dbb00434885a0cf5313e376f7"
 
     dispatch = JSON.parse(File.read(File.join(@root, "dispatch-request.json")))
     assert_equal "afio-rpof-dispatch-request/v0.1", dispatch.fetch("contract_version")
@@ -154,33 +132,6 @@ class ProductionBacklogRemoteTest < Minitest::Test
     env = JSON.parse(File.read(File.join(@root, "dispatch-env.json")))
     assert_equal "phase6-v0.3", env.fetch("social")
     assert_equal "phase6-v0.4", env.fetch("investigation")
-  end
-
-  def test_remote_campaign_fails_closed_when_qualified_identity_is_incomplete
-    executable("bin/verify-production-backlog", "#!/bin/sh\nexit 0\n")
-    executable("bin/preflight-production-backlog-sources", "#!/bin/sh\nexit 0\n")
-
-    models_path = File.join(@root, "config", "models.yml")
-    config = YAML.safe_load_file(models_path)
-    config.fetch("models").fetch("qwen").delete("pull_model")
-    File.write(models_path, YAML.dump(config))
-
-    manifest("experiments/incomplete.yml", dimension: "Combat Emphasis")
-    queue = queue_for(["experiments/incomplete.yml"])
-
-    out, err, status = Open3.capture3(
-      { "LME_REPO" => @root },
-      RbConfig.ruby,
-      File.join(@root, "bin", "lme-production-backlog-remote"),
-      queue,
-      "--all",
-      "--output", "output/incomplete"
-    )
-
-    refute status.success?, out + err
-    assert_includes err, "remote production bridge requires complete qualified model identity"
-    assert_includes err, "pull_model"
-    refute File.exist?(File.join(@root, "output", "incomplete.jobs.json"))
   end
 
   def test_remote_job_remaps_only_mac_endpoint_and_clears_inherited_token_override

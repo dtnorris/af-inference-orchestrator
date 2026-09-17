@@ -4,13 +4,13 @@
 require "fileutils"
 require "json"
 require "optparse"
-require "rbconfig"
 require "yaml"
 
 ROOT = File.expand_path(ENV.fetch("LME_REPO", File.expand_path("..", __dir__)))
 ENV["LME_REPO"] = ROOT
 $LOAD_PATH.unshift File.join(ROOT, "lib")
 require "production_backlog_runner_policy"
+require "production_backlog_remote_campaign"
 require "local_model_evaluation/rpof_client"
 
 opts = { workers: nil, all: false, output: nil, fleet: nil, group_by_model: false, context: ENV.fetch("LME_RUNPOD_REQUIRED_CONTEXT", "131072").to_i }
@@ -62,61 +62,31 @@ end
 manifests = File.readlines(order_path, chomp: true).reject { |line| line.strip.empty? }
 abort "ERROR: frozen queue is empty: #{order_path}" if manifests.empty?
 
-model_aliases = []
-jobs = manifests.each_with_index.map do |manifest_arg, index|
-  manifest_path = File.expand_path(manifest_arg, ROOT)
-  abort "ERROR: missing frozen manifest #{manifest_path}" unless File.file?(manifest_path)
-  manifest = YAML.safe_load_file(manifest_path, aliases: true) || {}
-  unless Array(manifest["workers"]).map(&:to_s) == ["mac"]
-    abort "ERROR: remote production bridge requires workers: [mac]: #{manifest_arg}"
-  end
+fleet_key = opts[:fleet] || ENV.fetch("LME_RUNPOD_FLEET", "default")
+worker_selector = if opts[:all]
+                    { "mode" => "all" }
+                  else
+                    {
+                      "mode" => "indices",
+                      "indices" => LocalModelEvaluation::RpofClient.expand_worker_selector(opts.fetch(:workers))
+                    }
+                  end
 
-  models = Array(manifest["models"]).map(&:to_s)
-  model_aliases.concat(models)
-  if opts[:group_by_model] && (models.length != 1 || models.first.empty?)
-    abort "ERROR: --group-by-model requires exactly one frozen manifest model: #{manifest_arg}"
-  end
-
-  runtime_max_tokens = ProductionBacklogRunnerPolicy.runtime_max_tokens_for(
-    contract_type:,
-    manifest:
-  )
-  env = {}
-  env["LME_RUNTIME_MAX_TOKENS"] = runtime_max_tokens.to_s if runtime_max_tokens
-  job = {
-    "job_id" => format("production-%04d", index + 1),
-    "argv" => ["bin/lme-production-remote-job", manifest_arg],
-    "env" => env
-  }
-  job["affinity"] = "model:#{models.first}" if opts[:group_by_model]
-  job
-end
-
-model_config = YAML.safe_load_file(File.join(ROOT, "config", "models.yml"), aliases: true).fetch("models")
 begin
-  qualified_models = model_aliases.uniq.map do |alias_name|
-    attrs = model_config.fetch(alias_name)
-    ollama_model = attrs.fetch("ollama_model").to_s.strip
-    pull_model = attrs.fetch("pull_model").to_s.strip
-    digest = attrs.fetch("qualified_manifest_sha256").to_s.strip.downcase
-
-    raise KeyError, "model #{alias_name.inspect} has empty ollama_model" if ollama_model.empty?
-    raise KeyError, "model #{alias_name.inspect} has empty pull_model" if pull_model.empty?
-    unless digest.match?(/\A[0-9a-f]{64}\z/)
-      raise KeyError, "model #{alias_name.inspect} has invalid qualified_manifest_sha256"
-    end
-
-    {
-      "model_ref" => alias_name,
-      "ollama_model" => ollama_model,
-      "pull_model" => pull_model,
-      "expected_digest" => digest
-    }
-  end
-rescue KeyError => e
-  abort "ERROR: remote production bridge requires complete qualified model identity: #{e.message}"
+  plan = ProductionBacklogRemoteCampaign.build_plan(
+    repo_root: ROOT,
+    contract_type:,
+    manifests:,
+    group_by_model: opts[:group_by_model],
+    fleet_key:,
+    worker_selector:,
+    required_context: opts.fetch(:context)
+  )
+rescue ProductionBacklogRemoteCampaign::Error => e
+  abort "ERROR: #{e.message}"
 end
-abort "ERROR: remote production bridge resolved no qualified models" if qualified_models.empty?
+jobs = plan.fetch("jobs")
+qualified_models = plan.fetch("qualified_models")
 
 output_dir = File.expand_path(opts.fetch(:output), ROOT)
 jobs_path = "#{output_dir}.jobs.json"
@@ -138,34 +108,10 @@ end
 ENV["AF_SOCIAL_INTERACTION_GUARDRAIL_PROFILE"] = "phase6-v0.3"
 ENV["AF_INVESTIGATION_GUARDRAIL_PROFILE"] = "phase6-v0.4"
 
-fleet_key = opts[:fleet] || ENV.fetch("LME_RUNPOD_FLEET", "default")
-worker_selector = if opts[:all]
-                    { "mode" => "all" }
-                  else
-                    {
-                      "mode" => "indices",
-                      "indices" => LocalModelEvaluation::RpofClient.expand_worker_selector(opts.fetch(:workers))
-                    }
-                  end
 client = LocalModelEvaluation::RpofClient.new(repo_root: ROOT)
-capability_request = {
-  "contract_version" => "afio-rpof-capability-check-request/v0.2",
-  "fleet_key" => fleet_key,
-  "worker_selector" => worker_selector,
-  "requirements" => {
-    "models" => qualified_models.map do |model|
-      {
-        "name" => model.fetch("ollama_model"),
-        "expected_digest" => model.fetch("expected_digest")
-      }
-    end,
-    "required_context_length" => opts.fetch(:context),
-    "require_fully_gpu_resident" => true
-  }
-}
 
 begin
-  capability = client.capability_check(capability_request)
+  capability = client.capability_check(plan.fetch("capability_request"))
 rescue LocalModelEvaluation::RpofClient::Error => e
   abort "ERROR: RPOF capability bridge failed: #{e.message}"
 end
@@ -174,16 +120,7 @@ unless capability.fetch("ready")
   abort "ERROR: RPOF capability check failed: #{details.join('; ')}"
 end
 
-dispatch_request = {
-  "contract_version" => "afio-rpof-dispatch-request/v0.1",
-  "target" => {
-    "fleet_key" => fleet_key,
-    "expected_fleet_id" => capability.fetch("fleet_id"),
-    "worker_indices" => capability.fetch("selected_worker_indices")
-  },
-  "group_by_affinity" => opts[:group_by_model],
-  "jobs" => jobs
-}
+dispatch_request = ProductionBacklogRemoteCampaign.build_dispatch_request(plan:, capability:)
 
 puts "Remote production campaign"
 puts "  Queue: #{queue_arg}"
