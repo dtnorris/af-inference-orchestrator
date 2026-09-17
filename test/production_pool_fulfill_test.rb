@@ -7,6 +7,7 @@ require "json"
 require "open3"
 require "rbconfig"
 require "digest"
+require "yaml"
 
 class ProductionPoolFulfillTest < Minitest::Test
   ROOT = File.expand_path("..", __dir__)
@@ -16,6 +17,7 @@ class ProductionPoolFulfillTest < Minitest::Test
     @tmp = Dir.mktmpdir("afio-pool-fulfill-")
     copy("bin/lme-production-pool-fulfill")
     copy("lib/local_model_evaluation/rpof_client.rb")
+    write_model_config
     fake_rpof
     @plan_path = File.join(@tmp, "output", "plan.json")
     FileUtils.mkdir_p(File.dirname(@plan_path))
@@ -63,6 +65,10 @@ class ProductionPoolFulfillTest < Minitest::Test
     assert_equal "afio-production-execution-pool-handoff/v0.1", handoff.fetch("contract_version")
     assert_equal "planned", handoff.dig("result", "status")
     assert_equal "opaque-qwen35", handoff.dig("result", "execution_handle")
+    assert_includes out, "Model ref: qwen"
+    assert_includes out, "Runtime model: qwen3.6:35b-a3b"
+    assert_includes out, "Pull model: qwen3.6:35b-a3b-q4_K_M"
+    assert_includes out, "Qualified digest: #{DIGEST}"
   end
 
   def test_paid_handoff_returns_ready_opaque_handle_and_worker_indices
@@ -99,6 +105,49 @@ class ProductionPoolFulfillTest < Minitest::Test
     assert_includes err, "use --dry-run or --yes"
   end
 
+  def test_rejects_stale_or_dequalified_plan_identity_before_rpof
+    cases = {
+      "model_ref" => lambda do |plan_document, _models|
+        plan_document.fetch("pools").first["model_ref"] = "retired-qwen"
+      end,
+      "ollama_model" => lambda do |_plan_document, models|
+        models.fetch("models").fetch("qwen")["ollama_model"] = "qwen3.6:35b-a3b-replacement"
+      end,
+      "pull_model" => lambda do |_plan_document, models|
+        models.fetch("models").fetch("qwen")["pull_model"] = "qwen3.6:35b-a3b-q5_K_M"
+      end,
+      "expected_digest" => lambda do |_plan_document, models|
+        models.fetch("models").fetch("qwen")["qualified_manifest_sha256"] = "b" * 64
+      end
+    }
+
+    cases.each do |field, mutate|
+      plan_document = plan
+      models = model_config_document
+      mutate.call(plan_document, models)
+      File.write(@plan_path, JSON.pretty_generate(plan_document) + "\n")
+      File.write(model_config_path, YAML.dump(models))
+      FileUtils.rm_f(File.join(@tmp, "captured-args.txt"))
+      FileUtils.rm_f(File.join(@tmp, "captured-request.json"))
+
+      output = "output/rejected-#{field}.json"
+      out, err, status = Open3.capture3(
+        { "LME_REPO" => @tmp },
+        RbConfig.ruby,
+        File.join(@tmp, "bin", "lme-production-pool-fulfill"),
+        "output/plan.json",
+        "--pool", "qwen35",
+        "--output", output,
+        "--dry-run"
+      )
+
+      refute status.success?, "#{field} unexpectedly accepted:\n#{out}\n#{err}"
+      assert_includes err, field
+      refute File.exist?(File.join(@tmp, "captured-args.txt")), "#{field} reached RPOF"
+      refute File.exist?(File.join(@tmp, output)), "#{field} wrote a fulfillment handoff"
+    end
+  end
+
   private
 
   def plan
@@ -130,6 +179,27 @@ class ProductionPoolFulfillTest < Minitest::Test
         "manifests" => [{ "path" => "fixture.yml", "sha256" => "e" * 64 }]
       }]
     }
+  end
+
+  def model_config_path
+    File.join(@tmp, "config", "models.yml")
+  end
+
+  def model_config_document
+    {
+      "models" => {
+        "qwen" => {
+          "ollama_model" => "qwen3.6:35b-a3b",
+          "pull_model" => "qwen3.6:35b-a3b-q4_K_M",
+          "qualified_manifest_sha256" => DIGEST
+        }
+      }
+    }
+  end
+
+  def write_model_config
+    FileUtils.mkdir_p(File.dirname(model_config_path))
+    File.write(model_config_path, YAML.dump(model_config_document))
   end
 
   def copy(path)

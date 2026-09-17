@@ -6,6 +6,7 @@ require "fileutils"
 require "json"
 require "optparse"
 require "pathname"
+require "yaml"
 
 ROOT = File.expand_path(ENV.fetch("LME_REPO", File.expand_path("..", __dir__)))
 $LOAD_PATH.unshift File.join(ROOT, "lib")
@@ -58,6 +59,55 @@ rescue ArgumentError
   path
 end
 
+def verify_current_qualification!(pool)
+  model_ref = pool.fetch("model_ref").to_s.strip
+  raise "execution pool has an empty model_ref" if model_ref.empty?
+
+  requirements = pool.fetch("requirements")
+  planned = {
+    "ollama_model" => requirements.fetch("ollama_model").to_s,
+    "pull_model" => requirements.fetch("pull_model").to_s,
+    "expected_digest" => requirements.fetch("expected_digest").to_s.downcase
+  }
+
+  models_path = File.join(ROOT, "config", "models.yml")
+  document = YAML.safe_load_file(models_path, aliases: true) || {}
+  models = document.fetch("models")
+  raise "current model config models must be a mapping" unless models.is_a?(Hash)
+  current_attrs = models[model_ref]
+  unless current_attrs.is_a?(Hash)
+    raise "current qualification does not match execution-pool plan: model_ref #{model_ref.inspect} is not currently qualified"
+  end
+
+  current = {
+    "ollama_model" => current_attrs["ollama_model"].to_s.strip,
+    "pull_model" => current_attrs["pull_model"].to_s.strip,
+    "expected_digest" => current_attrs["qualified_manifest_sha256"].to_s.strip.downcase
+  }
+  %w[ollama_model pull_model].each do |field|
+    if current.fetch(field).empty?
+      raise "current qualification for model_ref #{model_ref.inspect} is incomplete: #{field}"
+    end
+  end
+  unless current.fetch("expected_digest").match?(/\A[0-9a-f]{64}\z/)
+    raise "current qualification for model_ref #{model_ref.inspect} is incomplete: qualified_manifest_sha256"
+  end
+
+  mismatches = planned.each_with_object([]) do |(field, planned_value), rows|
+    current_value = current.fetch(field)
+    next if current_value == planned_value
+
+    rows << "#{field} plan=#{planned_value.inspect} current=#{current_value.inspect}"
+  end
+  unless mismatches.empty?
+    raise "current qualification does not match execution-pool plan for model_ref #{model_ref.inspect}: #{mismatches.join('; ')}"
+  end
+
+  current
+rescue Psych::Exception, SystemCallError => e
+  raise "cannot verify current qualified model configuration: #{e.message}"
+end
+
 begin
   plan_path = within_root(plan_arg)
   raise "execution-pool plan not found: #{plan_path}" unless File.file?(plan_path)
@@ -72,6 +122,7 @@ begin
   raise "execution pool #{pool_id.inspect} is not present in #{relative_path(plan_path)}" unless pool
 
   requirements = pool.fetch("requirements")
+  verify_current_qualification!(pool)
   capacity = pool.fetch("capacity")
   request = {
     "contract_version" => REQUEST_CONTRACT,
@@ -130,7 +181,10 @@ begin
 
   puts "AFIO ↔ RPOF execution-pool handoff"
   puts "  Pool: #{pool.fetch('pool_id')}"
-  puts "  Model: #{requirements.fetch('ollama_model')}"
+  puts "  Model ref: #{pool.fetch('model_ref')}"
+  puts "  Runtime model: #{requirements.fetch('ollama_model')}"
+  puts "  Pull model: #{requirements.fetch('pull_model')}"
+  puts "  Qualified digest: #{requirements.fetch('expected_digest')}"
   puts "  Workers requested: #{capacity.fetch('minimum_workers')}/#{capacity.fetch('desired_workers')} minimum/desired"
   puts format("  Pool hourly ceiling: $%.4f/hr", Float(capacity.fetch("max_pool_hourly_usd")))
   puts format("  Aggregate hourly ceiling: $%.4f/hr", Float(plan.dig("capacity", "max_total_hourly_usd")))
