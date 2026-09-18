@@ -6,6 +6,8 @@ require "tmpdir"
 require_relative "../lib/local_model_evaluation/rpof_client"
 
 class RpofClientTest < Minitest::Test
+  CLIENT = LocalModelEvaluation::RpofClient
+
   def setup
     @tmp = Dir.mktmpdir("rpof-client-")
     @fake = File.join(@tmp, "rpof")
@@ -15,31 +17,77 @@ class RpofClientTest < Minitest::Test
     FileUtils.remove_entry(@tmp) if @tmp && File.exist?(@tmp)
   end
 
-  def test_capability_check_reads_versioned_result
-    File.write(@fake, <<~'SH')
-      #!/bin/sh
-      set -eu
-      output=""
-      while [ "$#" -gt 0 ]; do
-        case "$1" in
-          --output)
-            output=$2
-            shift 2
-            ;;
-          *)
-            shift
-            ;;
-        esac
-      done
-      cat >"$output" <<'JSON'
-      {"contract_version":"afio-rpof-capability-check-result/v0.1","ready":true,"fleet_key":"fixture","fleet_id":"fixture-fleet","selected_worker_indices":[1],"capabilities":null,"diagnostics":[]}
-      JSON
-    SH
-    FileUtils.chmod(0o755, @fake)
-    client = LocalModelEvaluation::RpofClient.new(repo_root: @tmp, executable: @fake)
-    result = client.capability_check({ "fleet_key" => "fixture" })
-    assert result.fetch("ready")
-    assert_equal "fixture-fleet", result.fetch("fleet_id")
+  def test_command_builders_preserve_rpof_cli_contracts_without_spawning
+    assert_equal(
+      ["/fixture/rpof", "capability-check", "--request", "request.json", "--output", "result.json"],
+      CLIENT.capability_command(
+        executable: "/fixture/rpof",
+        request_path: "request.json",
+        output_path: "result.json"
+      )
+    )
+    assert_equal(
+      [
+        "/fixture/rpof", "execution-pool-fulfill",
+        "--request", "request.json", "--output", "result.json", "--dry-run", "--yes"
+      ],
+      CLIENT.fulfillment_command(
+        executable: "/fixture/rpof",
+        request_path: "request.json",
+        output_path: "result.json",
+        dry_run: true,
+        assume_yes: true
+      )
+    )
+    assert_equal(
+      [
+        "/fixture/rpof", "dispatch", "--request", "request.json",
+        "--workdir", File.expand_path("work"), "--output", File.expand_path("evidence")
+      ],
+      CLIENT.dispatch_command(
+        executable: "/fixture/rpof",
+        request_path: "request.json",
+        workdir: "work",
+        output_dir: "evidence"
+      )
+    )
+    assert_equal(
+      [
+        "/fixture/rpof", "shutdown", "--fleet", "qwen", "--workers", "1,3", "--terminal",
+        "--inactive-minutes", "5.0", "--drain-timeout-minutes", "10.0",
+        "--reason", "afio_campaign_completed"
+      ],
+      CLIENT.terminal_shutdown_command(
+        executable: "/fixture/rpof",
+        fleet_key: "qwen",
+        worker_indices: [3, 1, 3],
+        inactivity_minutes: 5,
+        drain_timeout_minutes: 10,
+        reason: "afio_campaign_completed"
+      )
+    )
+  end
+
+  def test_result_contract_validation_is_exact_without_spawning
+    cases = {
+      CLIENT::CAPABILITY_RESULT_CONTRACT => "RPOF capability result",
+      CLIENT::EXECUTION_POOL_RESULT_CONTRACT => "RPOF execution-pool result",
+      CLIENT::DISPATCH_SUMMARY_CONTRACT => "RPOF dispatch summary"
+    }
+
+    cases.each do |contract, label|
+      document = { "contract_version" => contract, "status" => "fixture" }
+      assert_same document, CLIENT.validate_result_contract!(document, expected: contract, label:)
+
+      error = assert_raises(CLIENT::Error) do
+        CLIENT.validate_result_contract!(
+          { "contract_version" => "wrong/v0" },
+          expected: contract,
+          label:
+        )
+      end
+      assert_equal %(unsupported #{label} version: "wrong/v0"), error.message
+    end
   end
 
   def test_dispatch_can_stream_subprocess_output_and_still_read_summary
@@ -65,7 +113,7 @@ class RpofClientTest < Minitest::Test
       JSON
     SH
     FileUtils.chmod(0o755, @fake)
-    client = LocalModelEvaluation::RpofClient.new(repo_root: @tmp, executable: @fake)
+    client = CLIENT.new(repo_root: @tmp, executable: @fake)
     summary = nil
     exit_status = nil
     captured_stdout = nil
@@ -88,35 +136,8 @@ class RpofClientTest < Minitest::Test
     assert_equal "", captured_stderr
   end
 
-  def test_terminal_shutdown_arms_selected_workers_with_default_gate_shape
-    args_path = File.join(@tmp, "args.txt")
-    File.write(@fake, <<~SH)
-      #!/bin/sh
-      set -eu
-      printf '%s\n' "$@" > #{args_path.inspect}
-      echo "fixture: terminal shutdown gate armed"
-    SH
-    FileUtils.chmod(0o755, @fake)
-    client = LocalModelEvaluation::RpofClient.new(repo_root: @tmp, executable: @fake)
-
-    output = client.terminal_shutdown(
-      fleet_key: "qwen",
-      worker_indices: [3, 1, 3],
-      inactivity_minutes: 5,
-      drain_timeout_minutes: 10,
-      reason: "afio_campaign_completed"
-    )
-
-    assert_includes output, "terminal shutdown gate armed"
-    args = File.readlines(args_path, chomp: true)
-    assert_equal [
-      "shutdown", "--fleet", "qwen", "--workers", "1,3", "--terminal",
-      "--inactive-minutes", "5.0", "--drain-timeout-minutes", "10.0",
-      "--reason", "afio_campaign_completed"
-    ], args
-  end
-
-  def test_worker_selector_expands_ranges_without_sixteen_worker_ceiling
-    assert_equal [1, 2, 3, 32], LocalModelEvaluation::RpofClient.expand_worker_selector("1-3,32")
+  def test_worker_normalization_and_selector_expansion_are_pure
+    assert_equal [1, 3], CLIENT.normalize_worker_indices([3, "1", 3])
+    assert_equal [1, 2, 3, 32], CLIENT.expand_worker_selector("1-3,32")
   end
 end

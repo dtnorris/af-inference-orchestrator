@@ -8,6 +8,10 @@ module LocalModelEvaluation
   class RpofClient
     class Error < StandardError; end
 
+    CAPABILITY_RESULT_CONTRACT = "afio-rpof-capability-check-result/v0.1"
+    EXECUTION_POOL_RESULT_CONTRACT = "afio-rpof-execution-pool-fulfill-result/v0.1"
+    DISPATCH_SUMMARY_CONTRACT = "afio-rpof-dispatch-summary/v0.1"
+
     def initialize(repo_root:, executable: nil)
       @repo_root = File.expand_path(repo_root)
       @executable = File.expand_path(executable || File.join(@repo_root, "bin", "lme-rpof"))
@@ -18,16 +22,21 @@ module LocalModelEvaluation
         Tempfile.create(["rpof-capability-result", ".json"]) do |result|
           result.close
           _stdout, stderr, status = Open3.capture3(
-            @executable, "capability-check", "--request", request_path, "--output", result.path,
+            *self.class.capability_command(
+              executable: @executable,
+              request_path:,
+              output_path: result.path
+            ),
             chdir: @repo_root
           )
           raise Error, "RPOF capability-check rejected request (exit #{status.exitstatus}): #{stderr.strip}" if status.exitstatus == 2
           raise Error, "RPOF capability-check did not write result: #{stderr.strip}" unless File.file?(result.path) && File.size?(result.path)
           document = JSON.parse(File.read(result.path))
-          unless document["contract_version"] == "afio-rpof-capability-check-result/v0.1"
-            raise Error, "unsupported RPOF capability result version: #{document['contract_version'].inspect}"
-          end
-          return document
+          return self.class.validate_result_contract!(
+            document,
+            expected: CAPABILITY_RESULT_CONTRACT,
+            label: "RPOF capability result"
+          )
         end
       end
     rescue JSON::ParserError => e
@@ -38,13 +47,13 @@ module LocalModelEvaluation
       with_json_file(request) do |request_path|
         Tempfile.create(["rpof-execution-pool-result", ".json"]) do |result|
           result.close
-          command = [
-            @executable, "execution-pool-fulfill",
-            "--request", request_path,
-            "--output", result.path
-          ]
-          command << "--dry-run" if dry_run
-          command << "--yes" if assume_yes
+          command = self.class.fulfillment_command(
+            executable: @executable,
+            request_path:,
+            output_path: result.path,
+            dry_run:,
+            assume_yes:
+          )
 
           if stream_output
             system(*command, chdir: @repo_root)
@@ -63,9 +72,11 @@ module LocalModelEvaluation
             raise Error, "RPOF execution-pool fulfillment did not write result: #{stderr.strip}"
           end
           document = JSON.parse(File.read(result.path))
-          unless document["contract_version"] == "afio-rpof-execution-pool-fulfill-result/v0.1"
-            raise Error, "unsupported RPOF execution-pool result version: #{document['contract_version'].inspect}"
-          end
+          self.class.validate_result_contract!(
+            document,
+            expected: EXECUTION_POOL_RESULT_CONTRACT,
+            label: "RPOF execution-pool result"
+          )
           return [document, status.exitstatus, stdout, stderr]
         end
       end
@@ -75,10 +86,12 @@ module LocalModelEvaluation
 
     def dispatch(request:, workdir:, output_dir:, stream_output: false)
       with_json_file(request) do |request_path|
-        command = [
-          @executable, "dispatch", "--request", request_path,
-          "--workdir", File.expand_path(workdir), "--output", File.expand_path(output_dir)
-        ]
+        command = self.class.dispatch_command(
+          executable: @executable,
+          request_path:,
+          workdir:,
+          output_dir:
+        )
         if stream_output
           system(*command, chdir: @repo_root)
           status = $?
@@ -93,9 +106,11 @@ module LocalModelEvaluation
         summary_path = File.join(File.expand_path(output_dir), "summary.json")
         raise Error, "RPOF dispatch did not write summary: #{stderr.strip}" unless File.file?(summary_path)
         summary = JSON.parse(File.read(summary_path))
-        unless summary["contract_version"] == "afio-rpof-dispatch-summary/v0.1"
-          raise Error, "unsupported RPOF dispatch summary version: #{summary['contract_version'].inspect}"
-        end
+        self.class.validate_result_contract!(
+          summary,
+          expected: DISPATCH_SUMMARY_CONTRACT,
+          label: "RPOF dispatch summary"
+        )
         [summary, status.exitstatus, stdout, stderr]
       end
     rescue JSON::ParserError => e
@@ -103,17 +118,14 @@ module LocalModelEvaluation
     end
 
     def terminal_shutdown(fleet_key:, worker_indices:, inactivity_minutes: 5.0, drain_timeout_minutes: 10.0, reason: "afio_campaign_terminal")
-      indices = Array(worker_indices).map { |value| Integer(value) }.uniq.sort
-      raise Error, "terminal shutdown requires at least one worker" if indices.empty?
-      command = [
-        @executable, "shutdown",
-        "--fleet", fleet_key.to_s,
-        "--workers", indices.join(","),
-        "--terminal",
-        "--inactive-minutes", Float(inactivity_minutes).to_s,
-        "--drain-timeout-minutes", Float(drain_timeout_minutes).to_s,
-        "--reason", reason.to_s
-      ]
+      command = self.class.terminal_shutdown_command(
+        executable: @executable,
+        fleet_key:,
+        worker_indices:,
+        inactivity_minutes:,
+        drain_timeout_minutes:,
+        reason:
+      )
       stdout, stderr, status = Open3.capture3(*command, chdir: @repo_root)
       unless status.success?
         detail = stderr.to_s.strip
@@ -123,6 +135,49 @@ module LocalModelEvaluation
       stdout.to_s.strip
     rescue ArgumentError, TypeError => e
       raise Error, "invalid terminal shutdown request: #{e.message}"
+    end
+
+    def self.capability_command(executable:, request_path:, output_path:)
+      [executable, "capability-check", "--request", request_path, "--output", output_path]
+    end
+
+    def self.fulfillment_command(executable:, request_path:, output_path:, dry_run: false, assume_yes: false)
+      command = [executable, "execution-pool-fulfill", "--request", request_path, "--output", output_path]
+      command << "--dry-run" if dry_run
+      command << "--yes" if assume_yes
+      command
+    end
+
+    def self.dispatch_command(executable:, request_path:, workdir:, output_dir:)
+      [
+        executable, "dispatch", "--request", request_path,
+        "--workdir", File.expand_path(workdir), "--output", File.expand_path(output_dir)
+      ]
+    end
+
+    def self.terminal_shutdown_command(executable:, fleet_key:, worker_indices:, inactivity_minutes:, drain_timeout_minutes:, reason:)
+      indices = normalize_worker_indices(worker_indices)
+      raise Error, "terminal shutdown requires at least one worker" if indices.empty?
+
+      [
+        executable, "shutdown",
+        "--fleet", fleet_key.to_s,
+        "--workers", indices.join(","),
+        "--terminal",
+        "--inactive-minutes", Float(inactivity_minutes).to_s,
+        "--drain-timeout-minutes", Float(drain_timeout_minutes).to_s,
+        "--reason", reason.to_s
+      ]
+    end
+
+    def self.validate_result_contract!(document, expected:, label:)
+      return document if document["contract_version"] == expected
+
+      raise Error, "unsupported #{label} version: #{document['contract_version'].inspect}"
+    end
+
+    def self.normalize_worker_indices(values)
+      Array(values).map { |value| Integer(value) }.uniq.sort
     end
 
     def self.expand_worker_selector(value)
@@ -140,8 +195,9 @@ module LocalModelEvaluation
           raise Error, "invalid worker selector component #{part.inspect}"
         end
       end
+      values = normalize_worker_indices(values)
       raise Error, "worker indices must be positive" unless values.all?(&:positive?)
-      values.uniq.sort
+      values
     end
 
     private
