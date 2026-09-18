@@ -25,6 +25,7 @@ opts = {
   capability_output: nil,
   source_preflight_queue: nil,
   group_by_affinity: false,
+  dynamic_worker_admission: false,
   keep_fleet: false,
   terminal_inactivity_minutes: 5.0,
   shutdown_drain_timeout_minutes: 10.0
@@ -48,6 +49,7 @@ parser = OptionParser.new do |o|
   o.on("--capability-output FILE", "Persist the generic capability result") { |v| opts[:capability_output] = v }
   o.on("--source-preflight-queue QUEUE", "Frozen production queue used to source-preflight selected production jobs") { |v| opts[:source_preflight_queue] = v }
   o.on("--group-by-affinity", "Request stable generic affinity grouping") { opts[:group_by_affinity] = true }
+  o.on("--dynamic-worker-admission", "Allow prepared workers to join this dispatch while jobs remain unclaimed") { opts[:dynamic_worker_admission] = true }
   o.on("--keep-fleet", "Do not arm the default post-campaign terminal shutdown gate") { opts[:keep_fleet] = true }
   o.on("--terminal-inactivity-minutes MINUTES", Float, "Continuous inactivity window before automatic shutdown (default: 5)") { |v| opts[:terminal_inactivity_minutes] = v }
   o.on("--shutdown-drain-timeout-minutes MINUTES", Float, "Maximum graceful drain wait after terminal gate fires (default: 10)") { |v| opts[:shutdown_drain_timeout_minutes] = v }
@@ -81,6 +83,19 @@ def write_atomic(path, content)
   File.rename(tmp, expanded)
 ensure
   File.delete(tmp) if defined?(tmp) && tmp && File.exist?(tmp)
+end
+
+def shutdown_workers(summary_or_path, fallback)
+  summary = if summary_or_path.is_a?(Hash)
+              summary_or_path
+            elsif File.file?(summary_or_path.to_s)
+              JSON.parse(File.read(summary_or_path.to_s))
+            end
+  values = summary && Array(summary["worker_indices"])
+  indices = values&.map { |value| Integer(value) }&.uniq&.sort
+  indices && !indices.empty? ? indices : Array(fallback).map { |value| Integer(value) }.uniq.sort
+rescue JSON::ParserError, ArgumentError, TypeError
+  Array(fallback).map { |value| Integer(value) }.uniq.sort
 end
 
 begin
@@ -183,14 +198,18 @@ begin
       request: dispatch_request,
       workdir: opts.fetch(:workdir),
       output_dir: opts.fetch(:output),
-      stream_output: true
+      stream_output: true,
+      dynamic_worker_admission: opts.fetch(:dynamic_worker_admission)
     )
   rescue Interrupt
     unless opts.fetch(:keep_fleet)
       begin
+        indices = shutdown_workers(
+          File.join(File.expand_path(opts.fetch(:output)), "summary.json"), selected_workers
+        )
         handoff = client.terminal_shutdown(
           fleet_key: opts.fetch(:fleet),
-          worker_indices: selected_workers,
+          worker_indices: indices,
           inactivity_minutes: opts.fetch(:terminal_inactivity_minutes),
           drain_timeout_minutes: opts.fetch(:shutdown_drain_timeout_minutes),
           reason: "afio_campaign_interrupted"
@@ -207,9 +226,10 @@ begin
   puts "RPOF campaign: #{summary.fetch('status')} (#{summary.fetch('completed_count')}/#{summary.fetch('job_count')} completed)"
 
   unless opts.fetch(:keep_fleet)
+    indices = shutdown_workers(summary, selected_workers)
     handoff = client.terminal_shutdown(
       fleet_key: opts.fetch(:fleet),
-      worker_indices: selected_workers,
+      worker_indices: indices,
       inactivity_minutes: opts.fetch(:terminal_inactivity_minutes),
       drain_timeout_minutes: opts.fetch(:shutdown_drain_timeout_minutes),
       reason: "afio_campaign_#{summary.fetch('status')}"

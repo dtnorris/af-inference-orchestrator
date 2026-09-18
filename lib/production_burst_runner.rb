@@ -76,7 +76,8 @@ class ProductionBurstRunner
         "--jobs", jobs_path,
         "--workdir", @root,
         "--output", campaign_dir,
-        "--source-preflight-queue", queue_dir
+        "--source-preflight-queue", queue_dir,
+        "--dynamic-worker-admission"
       ]
       command << "--keep-fleet" if keep_fleet
       env = {

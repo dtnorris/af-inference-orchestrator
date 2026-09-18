@@ -53,6 +53,38 @@ class RpofClientTest < Minitest::Test
     )
     assert_equal(
       [
+        "/fixture/rpof", "dispatch", "--request", "request.json",
+        "--workdir", File.expand_path("work"), "--output", File.expand_path("evidence"),
+        "--dynamic-worker-admission"
+      ],
+      CLIENT.dispatch_command(
+        executable: "/fixture/rpof",
+        request_path: "request.json",
+        workdir: "work",
+        output_dir: "evidence",
+        dynamic_worker_admission: true
+      )
+    )
+    assert_equal(
+      [
+        "/fixture/rpof", "dispatch-admit", "--fleet", "qwen",
+        "--output", File.expand_path("evidence"), "--worker", "3"
+      ],
+      CLIENT.dispatch_admit_command(
+        executable: "/fixture/rpof", fleet_key: "qwen", output_dir: "evidence", worker_index: 3
+      )
+    )
+    assert_equal(
+      [
+        "/fixture/rpof", "dispatch-close", "--fleet", "qwen",
+        "--output", File.expand_path("evidence")
+      ],
+      CLIENT.dispatch_close_command(
+        executable: "/fixture/rpof", fleet_key: "qwen", output_dir: "evidence"
+      )
+    )
+    assert_equal(
+      [
         "/fixture/rpof", "shutdown", "--fleet", "qwen", "--workers", "1,3", "--terminal",
         "--inactive-minutes", "5.0", "--drain-timeout-minutes", "10.0",
         "--reason", "afio_campaign_completed"

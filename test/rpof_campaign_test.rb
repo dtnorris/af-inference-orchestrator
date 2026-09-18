@@ -57,7 +57,7 @@ class RpofCampaignTest < Minitest::Test
         dispatch)
           mkdir -p "$output"
           cat >"$output/summary.json" <<'JSON'
-      {"contract_version":"afio-rpof-dispatch-summary/v0.1","fleet_key":"fixture","fleet_id":"fixture-fleet","started_at_utc":"2026-09-14T12:00:00Z","finished_at_utc":"2026-09-14T12:00:01Z","status":"completed","worker_count":2,"job_count":1,"completed_count":1,"failed_count":0,"not_started_count":0,"not_started_job_ids":[],"infrastructure_failures":[],"jobs":[]}
+      {"contract_version":"afio-rpof-dispatch-summary/v0.1","fleet_key":"fixture","fleet_id":"fixture-fleet","started_at_utc":"2026-09-14T12:00:00Z","finished_at_utc":"2026-09-14T12:00:01Z","status":"completed","worker_count":3,"worker_indices":[1,2,3],"job_count":1,"completed_count":1,"failed_count":0,"not_started_count":0,"not_started_job_ids":[],"infrastructure_failures":[],"jobs":[]}
       JSON
           ;;
         *)
@@ -103,7 +103,8 @@ class RpofCampaignTest < Minitest::Test
       "--workdir", @tmp,
       "--output", output,
       "--capability-output", capability_output,
-      "--group-by-affinity"
+      "--group-by-affinity",
+      "--dynamic-worker-admission"
     )
 
     assert status.success?, stdout + stderr
@@ -121,9 +122,12 @@ class RpofCampaignTest < Minitest::Test
     assert_equal "fixture-job", dispatch.dig("jobs", 0, "job_id")
     assert File.file?(capability_output)
 
+    dispatch_args = File.readlines(File.join(@tmp, "dispatch.args"), chomp: true)
+    assert_includes dispatch_args, "--dynamic-worker-admission"
+
     shutdown_args = File.readlines(File.join(@tmp, "shutdown.args"), chomp: true)
     assert_equal [
-      "--fleet", "fixture", "--workers", "1,2", "--terminal",
+      "--fleet", "fixture", "--workers", "1,2,3", "--terminal",
       "--inactive-minutes", "5.0", "--drain-timeout-minutes", "10.0",
       "--reason", "afio_campaign_completed"
     ], shutdown_args

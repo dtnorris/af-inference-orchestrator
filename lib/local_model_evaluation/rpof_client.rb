@@ -84,13 +84,14 @@ module LocalModelEvaluation
       raise Error, "RPOF execution-pool result is invalid JSON: #{e.message}"
     end
 
-    def dispatch(request:, workdir:, output_dir:, stream_output: false)
+    def dispatch(request:, workdir:, output_dir:, stream_output: false, dynamic_worker_admission: false)
       with_json_file(request) do |request_path|
         command = self.class.dispatch_command(
           executable: @executable,
           request_path:,
           workdir:,
-          output_dir:
+          output_dir:,
+          dynamic_worker_admission:
         )
         if stream_output
           system(*command, chdir: @repo_root)
@@ -115,6 +116,37 @@ module LocalModelEvaluation
       end
     rescue JSON::ParserError => e
       raise Error, "RPOF dispatch summary is invalid JSON: #{e.message}"
+    end
+
+    def admit_dispatch_worker(fleet_key:, output_dir:, worker_index:)
+      command = self.class.dispatch_admit_command(
+        executable: @executable,
+        fleet_key:,
+        output_dir:,
+        worker_index:
+      )
+      stdout, stderr, status = Open3.capture3(*command, chdir: @repo_root)
+      unless status.success?
+        detail = stderr.to_s.strip
+        detail = stdout.to_s.strip if detail.empty?
+        raise Error, "RPOF dispatch admission failed (exit #{status.exitstatus}): #{detail}"
+      end
+      stdout.to_s.strip
+    end
+
+    def close_dispatch_admissions(fleet_key:, output_dir:)
+      command = self.class.dispatch_close_command(
+        executable: @executable,
+        fleet_key:,
+        output_dir:
+      )
+      stdout, stderr, status = Open3.capture3(*command, chdir: @repo_root)
+      unless status.success?
+        detail = stderr.to_s.strip
+        detail = stdout.to_s.strip if detail.empty?
+        raise Error, "RPOF dispatch admission close failed (exit #{status.exitstatus}): #{detail}"
+      end
+      stdout.to_s.strip
     end
 
     def terminal_shutdown(fleet_key:, worker_indices:, inactivity_minutes: 5.0, drain_timeout_minutes: 10.0, reason: "afio_campaign_terminal")
@@ -148,10 +180,29 @@ module LocalModelEvaluation
       command
     end
 
-    def self.dispatch_command(executable:, request_path:, workdir:, output_dir:)
-      [
+    def self.dispatch_command(executable:, request_path:, workdir:, output_dir:, dynamic_worker_admission: false)
+      command = [
         executable, "dispatch", "--request", request_path,
         "--workdir", File.expand_path(workdir), "--output", File.expand_path(output_dir)
+      ]
+      command << "--dynamic-worker-admission" if dynamic_worker_admission
+      command
+    end
+
+    def self.dispatch_admit_command(executable:, fleet_key:, output_dir:, worker_index:)
+      [
+        executable, "dispatch-admit",
+        "--fleet", fleet_key.to_s,
+        "--output", File.expand_path(output_dir),
+        "--worker", Integer(worker_index).to_s
+      ]
+    end
+
+    def self.dispatch_close_command(executable:, fleet_key:, output_dir:)
+      [
+        executable, "dispatch-close",
+        "--fleet", fleet_key.to_s,
+        "--output", File.expand_path(output_dir)
       ]
     end
 
