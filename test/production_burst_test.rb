@@ -6,105 +6,254 @@ require "fileutils"
 require "json"
 require "open3"
 require "rbconfig"
+require "stringio"
 require "yaml"
 require "digest"
+require_relative "../lib/production_burst_runner"
 
 class ProductionBurstTest < Minitest::Test
   ROOT = File.expand_path("..", __dir__)
   DIGEST = "a" * 64
+  POOLS = [
+    ["qwen35", "qwen", "qwen3.6:35b-a3b"],
+    ["gemma4", "gemma", "gemma4:26b"],
+    ["gpt-oss", "gptoss", "gpt-oss:20b"]
+  ].freeze
+
+  class FakePreflight
+    attr_reader :calls
+
+    def initialize
+      @calls = []
+    end
+
+    def run!(queue_dir:, contract_type:)
+      @calls << { queue_dir:, contract_type: }
+      true
+    end
+  end
+
+  class FakeFulfillmentLauncher
+    attr_reader :calls
+
+    def initialize(fail_pool: nil)
+      @fail_pool = fail_pool
+      @calls = []
+    end
+
+    def call(plan_path:, pool_id:, handoff_path:, dry_run:)
+      @calls << pool_id
+      plan_sha = Digest::SHA256.file(plan_path).hexdigest
+      failed = !dry_run && pool_id == @fail_pool
+      result = if dry_run
+                 {
+                   "ready" => false,
+                   "status" => "planned",
+                   "execution_handle" => "ep-#{pool_id}",
+                   "worker_indices" => [],
+                   "detail" => "planned"
+                 }
+               elsif failed
+                 {
+                   "ready" => false,
+                   "status" => "unfulfilled",
+                   "execution_handle" => "ep-#{pool_id}",
+                   "worker_indices" => [],
+                   "detail" => "fixture unavailable"
+                 }
+               else
+                 {
+                   "ready" => true,
+                   "status" => "ready",
+                   "execution_handle" => "ep-#{pool_id}",
+                   "worker_indices" => [1],
+                   "detail" => "ready"
+                 }
+               end
+      FileUtils.mkdir_p(File.dirname(handoff_path))
+      File.write(
+        handoff_path,
+        JSON.pretty_generate(
+          "contract_version" => "afio-production-execution-pool-handoff/v0.1",
+          "plan" => { "path" => plan_path, "sha256" => plan_sha },
+          "pool_id" => pool_id,
+          "request" => {},
+          "result" => result.merge(
+            "contract_version" => "afio-rpof-execution-pool-fulfill-result/v0.1",
+            "plan_sha256" => plan_sha,
+            "pool_id" => pool_id
+          )
+        ) + "\n"
+      )
+      !failed
+    end
+  end
+
+  class FakeCampaignLauncher
+    attr_reader :launches
+
+    def initialize(workload_fail_pool: nil)
+      @workload_fail_pool = workload_fail_pool
+      @launches = []
+      @statuses = {}
+      @next_pid = 10_000
+    end
+
+    def launch(pool_id:, workers:, execution_handle:, requirements:, jobs_path:, campaign_dir:, queue_dir:, keep_fleet:)
+      @launches << {
+        pool_id:,
+        workers:,
+        execution_handle:,
+        requirements:,
+        jobs_path:,
+        campaign_dir:,
+        queue_dir:,
+        keep_fleet:
+      }
+      @next_pid += 1
+      pid = @next_pid
+      status = pool_id == @workload_fail_pool ? "workload_failed" : "completed"
+      FileUtils.mkdir_p(campaign_dir)
+      File.write(File.join(campaign_dir, "summary.json"), JSON.dump("status" => status))
+      @statuses[pid] = status
+      pid
+    end
+
+    def wait(pid)
+      @statuses.fetch(pid) == "workload_failed" ? 2 : 0
+    end
+
+    def alive?(_pid)
+      false
+    end
+
+    def interrupt(_pid); end
+
+    def wait_after_interrupt(_pid); end
+  end
 
   def setup
     @tmp = Dir.mktmpdir("production-burst-")
-    copy("bin/lme-production-burst")
-    copy("lib/production_backlog_runner_policy.rb")
-    copy("lib/production_backlog_runtime_contract.rb")
-    executable("bin/verify-production-backlog", "#!/bin/sh\nexit 0\n")
-    executable("bin/preflight-production-backlog-sources", "#!/bin/sh\nexit 0\n")
-    fake_fulfill
-    fake_campaign
-    build_fixture
   end
 
   def teardown
     FileUtils.remove_entry(@tmp) if @tmp && File.exist?(@tmp)
   end
 
-  def test_independent_lane_failure_does_not_block_other_ready_campaigns
-    out, err, status = Open3.capture3(
-      { "LME_REPO" => @tmp, "FIXTURE_FAIL_POOL" => "gemma4" },
-      RbConfig.ruby,
-      File.join(@tmp, "bin", "lme-production-burst"),
-      "output/plan.json",
-      "--output", "output/burst",
-      "--yes"
-    )
+  def test_independent_lane_failure_does_not_block_other_ready_campaigns_in_process
+    build_fixture
+    fulfillment = FakeFulfillmentLauncher.new(fail_pool: "gemma4")
+    campaign = FakeCampaignLauncher.new
 
-    refute status.success?, out + err
-    ledger = JSON.parse(File.read(File.join(@tmp, "output", "burst", "production-burst.json")))
-    assert_equal "completed", ledger.dig("pools", "qwen35", "status")
-    assert_equal "fulfillment_failed", ledger.dig("pools", "gemma4", "status")
-    assert_equal "completed", ledger.dig("pools", "gpt-oss", "status")
-    launches = File.readlines(File.join(@tmp, "campaign-launches.txt"), chomp: true)
-    assert_includes launches, "qwen35"
-    refute_includes launches, "gemma4"
-    assert_includes launches, "gpt-oss"
+    result, = run_runner(fulfillment:, campaign:)
+
+    assert_equal 1, result.exit_status
+    assert_equal "completed", result.ledger.dig("pools", "qwen35", "status")
+    assert_equal "fulfillment_failed", result.ledger.dig("pools", "gemma4", "status")
+    assert_equal "completed", result.ledger.dig("pools", "gpt-oss", "status")
+    assert_equal %w[qwen35 gemma4 gpt-oss], fulfillment.calls
+    assert_equal %w[qwen35 gpt-oss], campaign.launches.map { |launch| launch.fetch(:pool_id) }
   end
 
-  def test_resume_skips_completed_and_sticky_workload_failed_lanes
+  def test_resume_skips_completed_and_sticky_workload_failed_lanes_in_process
+    build_fixture
     burst_root = File.join(@tmp, "output", "burst")
-    FileUtils.mkdir_p(File.join(burst_root, "pools", "qwen35", "campaign"))
-    File.write(
-      File.join(burst_root, "pools", "qwen35", "campaign", "summary.json"),
-      JSON.dump("status" => "completed")
-    )
-    FileUtils.mkdir_p(File.join(burst_root, "pools", "gemma4", "campaign"))
-    File.write(
-      File.join(burst_root, "pools", "gemma4", "campaign", "summary.json"),
-      JSON.dump("status" => "workload_failed")
-    )
+    write_campaign_summary(burst_root, "qwen35", "completed")
+    write_campaign_summary(burst_root, "gemma4", "workload_failed")
+    fulfillment = FakeFulfillmentLauncher.new
+    campaign = FakeCampaignLauncher.new
 
-    out, err, status = Open3.capture3(
-      { "LME_REPO" => @tmp },
-      RbConfig.ruby,
-      File.join(@tmp, "bin", "lme-production-burst"),
-      "output/plan.json",
-      "--output", "output/burst",
-      "--yes"
-    )
+    result, = run_runner(fulfillment:, campaign:)
 
-    assert_equal 2, status.exitstatus, out + err
-    fulfilled = File.readlines(File.join(@tmp, "fulfill-calls.txt"), chomp: true)
-    refute_includes fulfilled, "qwen35"
-    refute_includes fulfilled, "gemma4"
-    assert_includes fulfilled, "gpt-oss"
-    ledger = JSON.parse(File.read(File.join(burst_root, "production-burst.json")))
-    assert_equal "completed", ledger.dig("pools", "qwen35", "status")
-    assert_equal "workload_failed", ledger.dig("pools", "gemma4", "status")
-    assert_equal "completed", ledger.dig("pools", "gpt-oss", "status")
+    assert_equal 2, result.exit_status
+    assert_equal ["gpt-oss"], fulfillment.calls
+    assert_equal ["gpt-oss"], campaign.launches.map { |launch| launch.fetch(:pool_id) }
+    assert_equal "completed", result.ledger.dig("pools", "qwen35", "status")
+    assert_equal "workload_failed", result.ledger.dig("pools", "gemma4", "status")
+    assert_equal "completed", result.ledger.dig("pools", "gpt-oss", "status")
   end
 
-  def test_dry_run_fulfills_all_pools_but_launches_no_campaigns
-    out, err, status = Open3.capture3(
-      { "LME_REPO" => @tmp },
-      RbConfig.ruby,
-      File.join(@tmp, "bin", "lme-production-burst"),
-      "output/plan.json",
-      "--output", "output/burst-dry",
-      "--dry-run"
-    )
+  def test_dry_run_fulfills_all_pools_but_launches_no_campaigns_in_process
+    build_fixture
+    fulfillment = FakeFulfillmentLauncher.new
+    campaign = FakeCampaignLauncher.new
 
-    assert status.success?, out + err
+    result, out = run_runner(fulfillment:, campaign:, dry_run: true, output: "output/burst-dry")
+
+    assert_equal 0, result.exit_status
+    assert_equal "planned", result.ledger.fetch("status")
+    assert_equal %w[qwen35 gemma4 gpt-oss], fulfillment.calls
+    assert_empty campaign.launches
     assert_includes out, "qwen35: model_ref=qwen runtime=qwen3.6:35b-a3b digest=#{DIGEST}"
     assert_includes out, "gemma4: model_ref=gemma runtime=gemma4:26b digest=#{DIGEST}"
     assert_includes out, "gpt-oss: model_ref=gptoss runtime=gpt-oss:20b digest=#{DIGEST}"
-    fulfilled = File.readlines(File.join(@tmp, "fulfill-calls.txt"), chomp: true)
-    assert_equal %w[qwen35 gemma4 gpt-oss], fulfilled
-    refute File.exist?(File.join(@tmp, "campaign-launches.txt"))
-    ledger = JSON.parse(File.read(File.join(@tmp, "output", "burst-dry", "production-burst.json")))
-    assert_equal "planned", ledger.fetch("status")
+  end
+
+  def test_cli_smoke_wires_preflight_fulfillment_and_campaign_children
+    build_fixture(pools: [POOLS.first])
+    copy("bin/lme-production-burst")
+    copy("lib/production_burst_runner.rb")
+    copy("lib/production_backlog_runner_policy.rb")
+    copy("lib/production_backlog_runtime_contract.rb")
+    executable("bin/verify-production-backlog", <<~'SH')
+      #!/bin/sh
+      set -eu
+      printf '%s\n' verifier >> "$LME_REPO/preflight-calls.txt"
+    SH
+    executable("bin/preflight-production-backlog-sources", <<~'SH')
+      #!/bin/sh
+      set -eu
+      printf '%s\n' source >> "$LME_REPO/preflight-calls.txt"
+    SH
+    fake_fulfill_child
+    fake_campaign_child
+
+    out, err, status = Open3.capture3(
+      { "LME_REPO" => @tmp },
+      RbConfig.ruby,
+      File.join(@tmp, "bin", "lme-production-burst"),
+      "output/plan.json",
+      "--output", "output/burst",
+      "--yes"
+    )
+
+    assert status.success?, out + err
+    assert_equal %w[verifier source], File.readlines(File.join(@tmp, "preflight-calls.txt"), chomp: true)
+    assert_equal ["qwen35"], File.readlines(File.join(@tmp, "fulfill-calls.txt"), chomp: true)
+    assert_equal ["qwen35"], File.readlines(File.join(@tmp, "campaign-launches.txt"), chomp: true)
+    ledger = JSON.parse(File.read(File.join(@tmp, "output", "burst", "production-burst.json")))
+    assert_equal "completed", ledger.fetch("status")
+    assert_equal "completed", ledger.dig("pools", "qwen35", "status")
   end
 
   private
+
+  def run_runner(fulfillment:, campaign:, dry_run: false, output: "output/burst")
+    out = StringIO.new
+    err = StringIO.new
+    preflight = FakePreflight.new
+    runner = ProductionBurstRunner.new(
+      root: @tmp,
+      preflight:,
+      fulfillment_launcher: fulfillment,
+      campaign_launcher: campaign,
+      out:,
+      err:
+    )
+    result = runner.run(
+      plan: "output/plan.json",
+      output:,
+      dry_run:,
+      keep_fleets: false
+    )
+    [result, out.string, err.string, preflight]
+  end
+
+  def write_campaign_summary(burst_root, pool_id, status)
+    campaign = File.join(burst_root, "pools", pool_id, "campaign")
+    FileUtils.mkdir_p(campaign)
+    File.write(File.join(campaign, "summary.json"), JSON.dump("status" => status))
+  end
 
   def copy(path)
     target = File.join(@tmp, path)
@@ -120,7 +269,7 @@ class ProductionBurstTest < Minitest::Test
     FileUtils.chmod(0o755, target)
   end
 
-  def fake_fulfill
+  def fake_fulfill_child
     executable("bin/lme-production-pool-fulfill", <<~'SH')
       #!/bin/sh
       set -eu
@@ -128,92 +277,43 @@ class ProductionBurstTest < Minitest::Test
       root=${LME_REPO:?}
       plan_arg=$1
       shift
-      case "$plan_arg" in
-        /*) plan_path=$plan_arg ;;
-        *) plan_path="$root/$plan_arg" ;;
-      esac
-
       pool=
       output_arg=
-      dry=false
       while [ "$#" -gt 0 ]; do
         case "$1" in
-          --pool)
-            pool=$2
-            shift 2
-            ;;
-          --output)
-            output_arg=$2
-            shift 2
-            ;;
-          --dry-run)
-            dry=true
-            shift
-            ;;
-          *)
-            shift
-            ;;
+          --pool) pool=$2; shift 2 ;;
+          --output) output_arg=$2; shift 2 ;;
+          *) shift ;;
         esac
       done
-      case "$output_arg" in
-        /*) output=$output_arg ;;
-        *) output="$root/$output_arg" ;;
-      esac
-
+      plan_path="$root/$plan_arg"
+      output="$root/$output_arg"
       printf '%s\n' "$pool" >> "$root/fulfill-calls.txt"
-      if command -v sha256sum >/dev/null 2>&1; then
-        plan_sha=$(sha256sum "$plan_path")
-      else
-        plan_sha=$(shasum -a 256 "$plan_path")
-      fi
+      plan_sha=$(shasum -a 256 "$plan_path")
       plan_sha=${plan_sha%% *}
-
-      fail_pool=${FIXTURE_FAIL_POOL:-}
-      if [ "$dry" = true ]; then
-        ready=false
-        status=planned
-        worker_indices='[]'
-        detail=planned
-        exit_status=0
-      elif [ "$pool" = "$fail_pool" ]; then
-        ready=false
-        status=unfulfilled
-        worker_indices='[]'
-        detail='fixture unavailable'
-        exit_status=1
-      else
-        ready=true
-        status=ready
-        worker_indices='[1]'
-        detail=ready
-        exit_status=0
-      fi
-
-      output_dir=${output%/*}
-      [ "$output_dir" = "$output" ] && output_dir=.
-      mkdir -p "$output_dir"
-      printf '%s\n' \
-        '{' \
-        '  "contract_version": "afio-production-execution-pool-handoff/v0.1",' \
-        "  \"plan\": { \"path\": \"$plan_path\", \"sha256\": \"$plan_sha\" }," \
-        "  \"pool_id\": \"$pool\"," \
-        '  "request": {},' \
-        '  "result": {' \
-        '    "contract_version": "afio-rpof-execution-pool-fulfill-result/v0.1",' \
-        "    \"ready\": $ready," \
-        "    \"status\": \"$status\"," \
-        "    \"plan_sha256\": \"$plan_sha\"," \
-        "    \"pool_id\": \"$pool\"," \
-        "    \"execution_handle\": \"ep-$pool\"," \
-        "    \"worker_indices\": $worker_indices," \
-        "    \"detail\": \"$detail\"" \
-        '  }' \
-        '}' > "$output"
-      exit "$exit_status"
+      mkdir -p "${output%/*}"
+      cat > "$output" <<EOF
+      {
+        "contract_version": "afio-production-execution-pool-handoff/v0.1",
+        "plan": { "path": "$plan_path", "sha256": "$plan_sha" },
+        "pool_id": "$pool",
+        "request": {},
+        "result": {
+          "contract_version": "afio-rpof-execution-pool-fulfill-result/v0.1",
+          "ready": true,
+          "status": "ready",
+          "plan_sha256": "$plan_sha",
+          "pool_id": "$pool",
+          "execution_handle": "ep-$pool",
+          "worker_indices": [1],
+          "detail": "ready"
+        }
+      }
+      EOF
     SH
   end
 
-  def fake_campaign
+  def fake_campaign_child
     executable("bin/lme-rpof-campaign", <<~'SH')
       #!/bin/sh
       set -eu
@@ -223,57 +323,23 @@ class ProductionBurstTest < Minitest::Test
       output=
       while [ "$#" -gt 0 ]; do
         case "$1" in
-          --fleet)
-            fleet=$2
-            shift 2
-            ;;
-          --output)
-            output=$2
-            shift 2
-            ;;
-          *)
-            shift
-            ;;
+          --fleet) fleet=$2; shift 2 ;;
+          --output) output=$2; shift 2 ;;
+          *) shift ;;
         esac
       done
-
       pool=${fleet#ep-}
       printf '%s\n' "$pool" >> "$root/campaign-launches.txt"
       mkdir -p "$output"
-      if [ "${FIXTURE_WORKLOAD_FAIL_POOL:-}" = "$pool" ]; then
-        status=workload_failed
-        completed_count=0
-        failed_count=1
-        exit_status=2
-      else
-        status=completed
-        completed_count=1
-        failed_count=0
-        exit_status=0
-      fi
-
-      printf '%s\n' \
-        '{' \
-        '  "contract_version": "afio-rpof-dispatch-summary/v0.1",' \
-        "  \"status\": \"$status\"," \
-        '  "job_count": 1,' \
-        "  \"completed_count\": $completed_count," \
-        "  \"failed_count\": $failed_count" \
-        '}' > "$output/summary.json"
-      exit "$exit_status"
+      printf '%s\n' '{"contract_version":"afio-rpof-dispatch-summary/v0.1","status":"completed"}' > "$output/summary.json"
     SH
   end
 
-  def build_fixture
+  def build_fixture(pools: POOLS)
     queue = File.join(@tmp, "production_backlog", "fixture")
     FileUtils.mkdir_p(queue)
     File.write(File.join(queue, "snapshot.yml"), YAML.dump("contract_type" => "adventure_ingest_v1"))
 
-    pools = [
-      ["qwen35", "qwen", "qwen3.6:35b-a3b"],
-      ["gemma4", "gemma", "gemma4:26b"],
-      ["gpt-oss", "gptoss", "gpt-oss:20b"]
-    ]
     manifests = pools.map do |pool_id, model_ref, _runtime|
       rel = "experiments/#{pool_id}.yml"
       path = File.join(@tmp, rel)
