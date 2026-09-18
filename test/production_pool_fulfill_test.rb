@@ -8,16 +8,48 @@ require "open3"
 require "rbconfig"
 require "digest"
 require "yaml"
+require_relative "../lib/local_model_evaluation/production_pool_fulfillment"
 require_relative "../lib/local_model_evaluation/production_pool_qualification"
 
 class ProductionPoolFulfillTest < Minitest::Test
   ROOT = File.expand_path("..", __dir__)
   DIGEST = "a" * 64
 
+  class FakeRpofClient
+    attr_reader :calls
+
+    def initialize(result_overrides: {}, exit_status: 0)
+      @result_overrides = result_overrides
+      @exit_status = exit_status
+      @calls = []
+    end
+
+    def fulfill_execution_pool(request:, dry_run:, assume_yes:, stream_output:)
+      @calls << {
+        request:,
+        dry_run:,
+        assume_yes:,
+        stream_output:
+      }
+      ready = !dry_run
+      result = {
+        "contract_version" => "afio-rpof-execution-pool-fulfill-result/v0.1",
+        "ready" => ready,
+        "status" => dry_run ? "planned" : "ready",
+        "plan_sha256" => request.fetch("plan_sha256"),
+        "pool_id" => request.fetch("pool_id"),
+        "execution_handle" => "opaque-#{request.fetch('pool_id')}",
+        "worker_indices" => ready ? [1, 2] : []
+      }.merge(@result_overrides)
+      [result, @exit_status, "fake stdout", "fake stderr"]
+    end
+  end
+
   def setup
     @tmp = Dir.mktmpdir("afio-pool-fulfill-")
     copy("bin/lme-production-pool-fulfill")
     copy("lib/local_model_evaluation/rpof_client.rb")
+    copy("lib/local_model_evaluation/production_pool_fulfillment.rb")
     copy("lib/local_model_evaluation/production_pool_qualification.rb")
     write_model_config
     fake_rpof
@@ -30,21 +62,14 @@ class ProductionPoolFulfillTest < Minitest::Test
     FileUtils.remove_entry(@tmp) if @tmp && File.exist?(@tmp)
   end
 
-  def test_dry_run_sends_provider_agnostic_pool_requirement_to_rpof
-    out, err, status = Open3.capture3(
-      { "LME_REPO" => @tmp },
-      RbConfig.ruby,
-      File.join(@tmp, "bin", "lme-production-pool-fulfill"),
-      "output/plan.json",
-      "--pool", "qwen35",
-      "--output", "output/handoff.json",
-      "--dry-run"
-    )
+  def test_dry_run_constructs_provider_agnostic_request_and_planned_handoff_in_process
+    client = FakeRpofClient.new
+    fulfillment = fulfill_with(client:, dry_run: true, assume_yes: false)
 
-    assert status.success?, out + err
-    request = JSON.parse(File.read(File.join(@tmp, "captured-request.json")))
+    call = client.calls.fetch(0)
+    request = call.fetch(:request)
     assert_equal "afio-rpof-execution-pool-fulfill-request/v0.1", request.fetch("contract_version")
-    assert_equal Digest::SHA256.file(@plan_path).hexdigest, request.fetch("plan_sha256")
+    assert_equal Digest::SHA256.hexdigest(plan_bytes), request.fetch("plan_sha256")
     assert_equal "qwen35", request.fetch("pool_id")
     assert_equal "qwen3.6:35b-a3b", request.dig("requirements", "ollama_model")
     assert_equal "qwen3.6:35b-a3b-q4_K_M", request.dig("requirements", "pull_model")
@@ -58,40 +83,66 @@ class ProductionPoolFulfillTest < Minitest::Test
     refute_includes keys, "gpu_ids"
     refute_includes keys, "provider"
     refute_includes keys, "fleet_key"
+    assert_equal true, call.fetch(:dry_run)
+    assert_equal false, call.fetch(:assume_yes)
+    assert_equal false, call.fetch(:stream_output)
 
-    args = File.readlines(File.join(@tmp, "captured-args.txt"), chomp: true)
-    assert_includes args, "--dry-run"
-    refute_includes args, "--yes"
-
-    handoff = JSON.parse(File.read(File.join(@tmp, "output", "handoff.json")))
+    handoff = fulfillment.handoff
     assert_equal "afio-production-execution-pool-handoff/v0.1", handoff.fetch("contract_version")
+    assert_equal "output/plan.json", handoff.dig("plan", "path")
+    assert_equal request.fetch("plan_sha256"), handoff.dig("plan", "sha256")
     assert_equal "planned", handoff.dig("result", "status")
     assert_equal "opaque-qwen35", handoff.dig("result", "execution_handle")
-    assert_includes out, "Model ref: qwen"
-    assert_includes out, "Runtime model: qwen3.6:35b-a3b"
-    assert_includes out, "Pull model: qwen3.6:35b-a3b-q4_K_M"
-    assert_includes out, "Qualified digest: #{DIGEST}"
+    assert_equal "fake stdout", fulfillment.stdout
+    assert_equal "fake stderr", fulfillment.stderr
   end
 
-  def test_paid_handoff_returns_ready_opaque_handle_and_worker_indices
+  def test_paid_fulfillment_returns_ready_opaque_handle_and_workers_in_process
+    client = FakeRpofClient.new
+    fulfillment = fulfill_with(client:, dry_run: false, assume_yes: true)
+
+    call = client.calls.fetch(0)
+    assert_equal false, call.fetch(:dry_run)
+    assert_equal true, call.fetch(:assume_yes)
+    result = fulfillment.handoff.fetch("result")
+    assert_equal true, result.fetch("ready")
+    assert_equal "ready", result.fetch("status")
+    assert_equal "opaque-qwen35", result.fetch("execution_handle")
+    assert_equal [1, 2], result.fetch("worker_indices")
+  end
+
+  def test_fulfillment_rejects_result_identity_mismatch_in_process
+    client = FakeRpofClient.new(result_overrides: { "pool_id" => "wrong-pool" })
+
+    error = assert_raises(RuntimeError) do
+      fulfill_with(client:, dry_run: true, assume_yes: false)
+    end
+
+    assert_includes error.message, "does not match the submitted AFIO plan/pool identity"
+  end
+
+  def test_cli_dry_run_routes_through_lme_rpof_and_writes_handoff
     out, err, status = Open3.capture3(
       { "LME_REPO" => @tmp },
       RbConfig.ruby,
       File.join(@tmp, "bin", "lme-production-pool-fulfill"),
       "output/plan.json",
       "--pool", "qwen35",
-      "--output", "output/handoff-paid.json",
-      "--yes"
+      "--output", "output/handoff.json",
+      "--dry-run"
     )
 
     assert status.success?, out + err
+    request = JSON.parse(File.read(File.join(@tmp, "captured-request.json")))
+    assert_equal Digest::SHA256.file(@plan_path).hexdigest, request.fetch("plan_sha256")
+    assert_equal "qwen35", request.fetch("pool_id")
     args = File.readlines(File.join(@tmp, "captured-args.txt"), chomp: true)
-    assert_includes args, "--yes"
-    result = JSON.parse(File.read(File.join(@tmp, "output", "handoff-paid.json"))).fetch("result")
-    assert_equal true, result.fetch("ready")
-    assert_equal "ready", result.fetch("status")
-    assert_equal "opaque-qwen35", result.fetch("execution_handle")
-    assert_equal [1, 2], result.fetch("worker_indices")
+    assert_includes args, "--dry-run"
+    refute_includes args, "--yes"
+    handoff = JSON.parse(File.read(File.join(@tmp, "output", "handoff.json")))
+    assert_equal "planned", handoff.dig("result", "status")
+    assert_includes out, "Model ref: qwen"
+    assert_includes out, "Runtime model: qwen3.6:35b-a3b"
   end
 
   def test_requires_explicit_dry_run_or_paid_authorization
@@ -164,6 +215,21 @@ class ProductionPoolFulfillTest < Minitest::Test
   end
 
   private
+
+  def fulfill_with(client:, dry_run:, assume_yes:)
+    LocalModelEvaluation::ProductionPoolFulfillment.new(rpof_client: client).fulfill(
+      plan:,
+      plan_bytes:,
+      plan_path: "output/plan.json",
+      pool: plan.fetch("pools").first,
+      dry_run:,
+      assume_yes:
+    )
+  end
+
+  def plan_bytes
+    JSON.pretty_generate(plan) + "\n"
+  end
 
   def plan
     {

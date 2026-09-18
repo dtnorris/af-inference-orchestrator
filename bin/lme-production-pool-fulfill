@@ -1,7 +1,6 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-require "digest"
 require "fileutils"
 require "json"
 require "optparse"
@@ -11,10 +10,9 @@ ROOT = File.expand_path(ENV.fetch("LME_REPO", File.expand_path("..", __dir__)))
 $LOAD_PATH.unshift File.join(ROOT, "lib")
 require "local_model_evaluation/rpof_client"
 require "local_model_evaluation/production_pool_qualification"
+require "local_model_evaluation/production_pool_fulfillment"
 
 PLAN_CONTRACT = "afio-production-execution-pool-plan/v0.1"
-REQUEST_CONTRACT = "afio-rpof-execution-pool-fulfill-request/v0.1"
-HANDOFF_CONTRACT = "afio-production-execution-pool-handoff/v0.1"
 
 opts = {
   pool: nil,
@@ -78,50 +76,22 @@ begin
     models_path: File.join(ROOT, "config", "models.yml")
   )
   capacity = pool.fetch("capacity")
-  request = {
-    "contract_version" => REQUEST_CONTRACT,
-    "plan_sha256" => Digest::SHA256.hexdigest(plan_bytes),
-    "pool_id" => pool.fetch("pool_id"),
-    "requirements" => {
-      "ollama_model" => requirements.fetch("ollama_model"),
-      "pull_model" => requirements.fetch("pull_model"),
-      "expected_digest" => requirements.fetch("expected_digest"),
-      "required_context_length" => requirements.fetch("required_context_length"),
-      "require_fully_gpu_resident" => requirements.fetch("require_fully_gpu_resident")
-    },
-    "capacity" => {
-      "desired_workers" => capacity.fetch("desired_workers"),
-      "minimum_workers" => capacity.fetch("minimum_workers"),
-      "max_pool_hourly_usd" => capacity.fetch("max_pool_hourly_usd"),
-      "max_total_hourly_usd" => plan.dig("capacity", "max_total_hourly_usd")
-    }
-  }
-
-  client = LocalModelEvaluation::RpofClient.new(repo_root: ROOT)
-  result, rpof_exit, stdout, stderr = client.fulfill_execution_pool(
-    request:,
+  fulfillment = LocalModelEvaluation::ProductionPoolFulfillment.new(
+    rpof_client: LocalModelEvaluation::RpofClient.new(repo_root: ROOT)
+  ).fulfill(
+    plan:,
+    plan_bytes:,
+    plan_path: relative_path(plan_path),
+    pool:,
     dry_run: opts.fetch(:dry_run),
     assume_yes: opts.fetch(:yes),
     stream_output: true
   )
-  $stdout.write(stdout) unless stdout.empty?
-  $stderr.write(stderr) unless stderr.empty?
-
-  unless result["plan_sha256"].to_s == request.fetch("plan_sha256") &&
-         result["pool_id"].to_s == request.fetch("pool_id")
-    raise "RPOF fulfillment result does not match the submitted AFIO plan/pool identity"
-  end
-
-  handoff = {
-    "contract_version" => HANDOFF_CONTRACT,
-    "plan" => {
-      "path" => relative_path(plan_path),
-      "sha256" => request.fetch("plan_sha256")
-    },
-    "pool_id" => pool.fetch("pool_id"),
-    "request" => request,
-    "result" => result
-  }
+  handoff = fulfillment.handoff
+  result = handoff.fetch("result")
+  rpof_exit = fulfillment.rpof_exit
+  $stdout.write(fulfillment.stdout) unless fulfillment.stdout.empty?
+  $stderr.write(fulfillment.stderr) unless fulfillment.stderr.empty?
 
   output_path = within_root(opts.fetch(:output))
   FileUtils.mkdir_p(File.dirname(output_path))
