@@ -62,7 +62,7 @@ class ProductionExecutionPoolPlanTest < Minitest::Test
     assert_equal 131_072, qwen.dig("requirements", "required_context_length")
     assert_equal true, qwen.dig("requirements", "require_fully_gpu_resident")
     assert_equal(
-      { "desired_workers" => 4, "minimum_workers" => 2, "max_pool_hourly_usd" => 3.0 },
+      { "desired_workers" => 4, "minimum_workers" => 1, "max_pool_hourly_usd" => 3.0 },
       qwen.fetch("capacity")
     )
 

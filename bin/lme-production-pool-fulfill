@@ -17,6 +17,7 @@ PLAN_CONTRACT = "afio-production-execution-pool-plan/v0.1"
 opts = {
   pool: nil,
   output: nil,
+  target_workers: nil,
   dry_run: false,
   yes: false
 }
@@ -25,6 +26,7 @@ parser = OptionParser.new do |o|
   o.banner = "Usage: bin/lme-production-pool-fulfill PLAN.json --pool POOL --output PATH [--dry-run|--yes]"
   o.on("--pool POOL", "Execution-pool id from the deterministic AFIO plan") { |v| opts[:pool] = v }
   o.on("--output PATH", "Write AFIO↔RPOF fulfillment handoff JSON") { |v| opts[:output] = v }
+  o.on("--target-workers N", Integer, "Cap this fulfillment at N workers within the frozen plan ceiling") { |v| opts[:target_workers] = v }
   o.on("--dry-run", "Plan RPOF capacity without creating paid resources") { opts[:dry_run] = true }
   o.on("--yes", "Authorize paid RPOF execution-pool fulfillment") { opts[:yes] = true }
 end
@@ -77,7 +79,8 @@ begin
   )
   capacity = pool.fetch("capacity")
   fulfillment = LocalModelEvaluation::ProductionPoolFulfillment.new(
-    rpof_client: LocalModelEvaluation::RpofClient.new(repo_root: ROOT)
+    rpof_client: LocalModelEvaluation::RpofClient.new(repo_root: ROOT),
+    paid_lock_path: File.join(ROOT, "output", ".rpof-paid-fulfillment.lock")
   ).fulfill(
     plan:,
     plan_bytes:,
@@ -85,7 +88,8 @@ begin
     pool:,
     dry_run: opts.fetch(:dry_run),
     assume_yes: opts.fetch(:yes),
-    stream_output: true
+    stream_output: true,
+    target_workers: opts[:target_workers]
   )
   handoff = fulfillment.handoff
   result = handoff.fetch("result")
@@ -109,7 +113,8 @@ begin
   puts "  Runtime model: #{requirements.fetch('ollama_model')}"
   puts "  Pull model: #{requirements.fetch('pull_model')}"
   puts "  Qualified digest: #{requirements.fetch('expected_digest')}"
-  puts "  Workers requested: #{capacity.fetch('minimum_workers')}/#{capacity.fetch('desired_workers')} minimum/desired"
+  request_capacity = handoff.dig("request", "capacity")
+  puts "  Workers requested: #{request_capacity.fetch('minimum_workers')}/#{request_capacity.fetch('desired_workers')} minimum/desired"
   puts format("  Pool hourly ceiling: $%.4f/hr", Float(capacity.fetch("max_pool_hourly_usd")))
   puts format("  Aggregate hourly ceiling: $%.4f/hr", Float(plan.dig("capacity", "max_total_hourly_usd")))
   puts "  Execution handle: #{result.fetch('execution_handle')}"

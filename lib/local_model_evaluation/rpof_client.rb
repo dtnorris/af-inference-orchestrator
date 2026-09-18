@@ -134,6 +134,25 @@ module LocalModelEvaluation
       stdout.to_s.strip
     end
 
+    def scale_fleet(fleet_key:, worker_count:, max_hourly_usd:, max_total_hourly_usd:)
+      command = self.class.scale_command(
+        executable: @executable,
+        fleet_key:,
+        worker_count:,
+        max_hourly_usd:,
+        max_total_hourly_usd:
+      )
+      stdout, stderr, status = Open3.capture3(*command, chdir: @repo_root)
+      unless status.success?
+        detail = stderr.to_s.strip
+        detail = stdout.to_s.strip if detail.empty?
+        raise Error, "RPOF fleet rollback failed (exit #{status.exitstatus}): #{detail}"
+      end
+      stdout.to_s.strip
+    rescue ArgumentError, TypeError => e
+      raise Error, "invalid RPOF fleet rollback request: #{e.message}"
+    end
+
     def close_dispatch_admissions(fleet_key:, output_dir:)
       command = self.class.dispatch_close_command(
         executable: @executable,
@@ -195,6 +214,17 @@ module LocalModelEvaluation
         "--fleet", fleet_key.to_s,
         "--output", File.expand_path(output_dir),
         "--worker", Integer(worker_index).to_s
+      ]
+    end
+
+    def self.scale_command(executable:, fleet_key:, worker_count:, max_hourly_usd:, max_total_hourly_usd:)
+      [
+        executable, "scale",
+        "--fleet", fleet_key.to_s,
+        "--workers", Integer(worker_count).to_s,
+        "--max-hourly-usd", Float(max_hourly_usd).to_s,
+        "--max-total-hourly-usd", Float(max_total_hourly_usd).to_s,
+        "--yes"
       ]
     end
 

@@ -9,7 +9,7 @@ pools:
   qwen35:
     model_ref: qwen
     desired_workers: 4
-    minimum_workers: 2
+    minimum_workers: 1
     max_pool_hourly_usd: 3.0
   qwen27:
     model_ref: qwen27

@@ -10,6 +10,7 @@ ENV["LME_REPO"] = ROOT
 $LOAD_PATH.unshift File.join(ROOT, "lib")
 require "local_model_evaluation/production_backlog_source_preflight"
 require "local_model_evaluation/rpof_client"
+require "production_worker_expansion_controller"
 
 opts = {
   workers: nil,
@@ -26,6 +27,9 @@ opts = {
   source_preflight_queue: nil,
   group_by_affinity: false,
   dynamic_worker_admission: false,
+  expansion_plan: nil,
+  expansion_pool: nil,
+  initial_fulfillment_seconds: nil,
   keep_fleet: false,
   terminal_inactivity_minutes: 5.0,
   shutdown_drain_timeout_minutes: 10.0
@@ -50,6 +54,9 @@ parser = OptionParser.new do |o|
   o.on("--source-preflight-queue QUEUE", "Frozen production queue used to source-preflight selected production jobs") { |v| opts[:source_preflight_queue] = v }
   o.on("--group-by-affinity", "Request stable generic affinity grouping") { opts[:group_by_affinity] = true }
   o.on("--dynamic-worker-admission", "Allow prepared workers to join this dispatch while jobs remain unclaimed") { opts[:dynamic_worker_admission] = true }
+  o.on("--expansion-plan FILE", "Frozen execution-pool plan used for adaptive worker expansion") { |v| opts[:expansion_plan] = v }
+  o.on("--expansion-pool POOL", "Pool id within --expansion-plan") { |v| opts[:expansion_pool] = v }
+  o.on("--initial-fulfillment-seconds N", Float, "Measured starter fulfillment wall time used to estimate another worker bootstrap") { |v| opts[:initial_fulfillment_seconds] = v }
   o.on("--keep-fleet", "Do not arm the default post-campaign terminal shutdown gate") { opts[:keep_fleet] = true }
   o.on("--terminal-inactivity-minutes MINUTES", Float, "Continuous inactivity window before automatic shutdown (default: 5)") { |v| opts[:terminal_inactivity_minutes] = v }
   o.on("--shutdown-drain-timeout-minutes MINUTES", Float, "Maximum graceful drain wait after terminal gate fires (default: 10)") { |v| opts[:shutdown_drain_timeout_minutes] = v }
@@ -69,6 +76,17 @@ begin
   raise OptionParser::InvalidArgument, "--shutdown-drain-timeout-minutes must be positive" unless opts[:shutdown_drain_timeout_minutes].positive?
   unknown_digests = opts[:expected_digests].keys - opts[:models]
   raise OptionParser::InvalidArgument, "digest supplied for unrequested model(s): #{unknown_digests.join(', ')}" unless unknown_digests.empty?
+  expansion_values = [opts[:expansion_plan], opts[:expansion_pool], opts[:initial_fulfillment_seconds]]
+  if expansion_values.any? && !expansion_values.all?
+    raise OptionParser::InvalidArgument,
+          "--expansion-plan, --expansion-pool, and --initial-fulfillment-seconds must be used together"
+  end
+  if opts[:initial_fulfillment_seconds] && opts[:initial_fulfillment_seconds] <= 0
+    raise OptionParser::InvalidArgument, "--initial-fulfillment-seconds must be positive"
+  end
+  if opts[:expansion_plan] && !opts[:dynamic_worker_admission]
+    raise OptionParser::InvalidArgument, "adaptive expansion requires --dynamic-worker-admission"
+  end
 rescue OptionParser::ParseError => e
   warn "ERROR: #{e.message}"
   warn parser
@@ -193,6 +211,29 @@ begin
     "group_by_affinity" => opts.fetch(:group_by_affinity),
     "jobs" => jobs
   }
+  dispatch_running = true
+  expansion_error = nil
+  expansion_thread = if opts[:expansion_plan]
+                       Thread.new do
+                         begin
+                           ProductionWorkerExpansionController.new(
+                             root: ROOT,
+                             rpof_client: client,
+                             out: $stdout
+                           ).run(
+                             plan_path: opts.fetch(:expansion_plan),
+                             pool_id: opts.fetch(:expansion_pool),
+                             execution_handle: opts.fetch(:fleet),
+                             output_dir: opts.fetch(:output),
+                             initial_worker_indices: selected_workers,
+                             initial_fulfillment_seconds: opts.fetch(:initial_fulfillment_seconds),
+                             dispatch_alive: -> { dispatch_running }
+                           )
+                         rescue ProductionWorkerExpansionController::Error => e
+                           expansion_error = e
+                         end
+                       end
+                     end
   begin
     summary, _rpof_exit, stdout, stderr = client.dispatch(
       request: dispatch_request,
@@ -202,6 +243,8 @@ begin
       dynamic_worker_admission: opts.fetch(:dynamic_worker_admission)
     )
   rescue Interrupt
+    dispatch_running = false
+    expansion_thread&.join
     unless opts.fetch(:keep_fleet)
       begin
         indices = shutdown_workers(
@@ -220,7 +263,11 @@ begin
       end
     end
     raise
+  ensure
+    dispatch_running = false
+    expansion_thread&.join
   end
+  warn "WARNING: adaptive worker expansion stopped: #{expansion_error.message}" if expansion_error
   $stdout.write(stdout) unless stdout.empty?
   $stderr.write(stderr) unless stderr.empty?
   puts "RPOF campaign: #{summary.fetch('status')} (#{summary.fetch('completed_count')}/#{summary.fetch('job_count')} completed)"

@@ -76,6 +76,19 @@ class RpofClientTest < Minitest::Test
     )
     assert_equal(
       [
+        "/fixture/rpof", "scale", "--fleet", "qwen", "--workers", "2",
+        "--max-hourly-usd", "4.0", "--max-total-hourly-usd", "7.0", "--yes"
+      ],
+      CLIENT.scale_command(
+        executable: "/fixture/rpof",
+        fleet_key: "qwen",
+        worker_count: 2,
+        max_hourly_usd: 4,
+        max_total_hourly_usd: 7
+      )
+    )
+    assert_equal(
+      [
         "/fixture/rpof", "dispatch-close", "--fleet", "qwen",
         "--output", File.expand_path("evidence")
       ],

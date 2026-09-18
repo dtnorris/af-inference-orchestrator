@@ -97,6 +97,48 @@ class ProductionPoolFulfillTest < Minitest::Test
     assert_equal "fake stderr", fulfillment.stderr
   end
 
+  def test_paid_fulfillment_can_target_one_worker_without_mutating_frozen_plan
+    client = FakeRpofClient.new(result_overrides: { "worker_indices" => [1] })
+    original = Marshal.load(Marshal.dump(plan))
+
+    fulfillment = LocalModelEvaluation::ProductionPoolFulfillment.new(
+      rpof_client: client
+    ).fulfill(
+      plan:,
+      plan_bytes:,
+      plan_path: "output/plan.json",
+      pool: plan.fetch("pools").first,
+      dry_run: false,
+      assume_yes: true,
+      target_workers: 1
+    )
+
+    request = client.calls.fetch(0).fetch(:request)
+    assert_equal 1, request.dig("capacity", "desired_workers")
+    assert_equal 1, request.dig("capacity", "minimum_workers")
+    assert_equal original, plan
+    assert_equal [1], fulfillment.handoff.dig("result", "worker_indices")
+  end
+
+  def test_targeted_fulfillment_rejects_capacity_above_frozen_plan_ceiling
+    client = FakeRpofClient.new
+
+    error = assert_raises(ArgumentError) do
+      LocalModelEvaluation::ProductionPoolFulfillment.new(rpof_client: client).fulfill(
+        plan:,
+        plan_bytes:,
+        plan_path: "output/plan.json",
+        pool: plan.fetch("pools").first,
+        dry_run: false,
+        assume_yes: true,
+        target_workers: 5
+      )
+    end
+
+    assert_includes error.message, "exceeds planned desired workers"
+    assert_empty client.calls
+  end
+
   def test_paid_fulfillment_returns_ready_opaque_handle_and_workers_in_process
     client = FakeRpofClient.new
     fulfillment = fulfill_with(client:, dry_run: false, assume_yes: true)

@@ -40,14 +40,15 @@ class ProductionBurstRunner
       @root = File.expand_path(root)
     end
 
-    def call(plan_path:, pool_id:, handoff_path:, dry_run:)
+    def call(plan_path:, pool_id:, handoff_path:, dry_run:, target_workers: nil)
       command = [
         File.join(@root, "bin", "lme-production-pool-fulfill"),
         relative_path(plan_path),
         "--pool", pool_id,
-        "--output", relative_path(handoff_path),
-        dry_run ? "--dry-run" : "--yes"
+        "--output", relative_path(handoff_path)
       ]
+      command.concat(["--target-workers", Integer(target_workers).to_s]) if target_workers
+      command << (dry_run ? "--dry-run" : "--yes")
       system({ "LME_REPO" => @root }, *command, chdir: @root)
     end
 
@@ -65,7 +66,8 @@ class ProductionBurstRunner
       @root = File.expand_path(root)
     end
 
-    def launch(pool_id:, workers:, execution_handle:, requirements:, jobs_path:, campaign_dir:, queue_dir:, keep_fleet:)
+    def launch(pool_id:, workers:, execution_handle:, requirements:, jobs_path:, campaign_dir:, queue_dir:, keep_fleet:,
+               plan_path:, initial_fulfillment_seconds:)
       command = [
         File.join(@root, "bin", "lme-rpof-campaign"),
         "--workers", workers.join(","),
@@ -77,7 +79,10 @@ class ProductionBurstRunner
         "--workdir", @root,
         "--output", campaign_dir,
         "--source-preflight-queue", queue_dir,
-        "--dynamic-worker-admission"
+        "--dynamic-worker-admission",
+        "--expansion-plan", plan_path,
+        "--expansion-pool", pool_id,
+        "--initial-fulfillment-seconds", Float(initial_fulfillment_seconds).to_s
       ]
       command << "--keep-fleet" if keep_fleet
       env = {
@@ -124,13 +129,15 @@ class ProductionBurstRunner
     end
   end
 
-  def initialize(root:, preflight: nil, fulfillment_launcher: nil, campaign_launcher: nil, out: $stdout, err: $stderr)
+  def initialize(root:, preflight: nil, fulfillment_launcher: nil, campaign_launcher: nil, out: $stdout, err: $stderr,
+                 monotonic_clock: nil)
     @root = File.expand_path(root)
     @preflight = preflight || SystemPreflight.new(root: @root)
     @fulfillment_launcher = fulfillment_launcher || SystemFulfillmentLauncher.new(root: @root)
     @campaign_launcher = campaign_launcher || SystemCampaignLauncher.new(root: @root)
     @out = out
     @err = err
+    @monotonic_clock = monotonic_clock || -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }
   end
 
   def run(plan:, output:, dry_run:, keep_fleets: false)
@@ -236,14 +243,18 @@ class ProductionBurstRunner
     jobs_path = File.join(pool_dir, "jobs.json")
     materialize_jobs(jobs_path, manifest_jobs(pool, contract_type))
     handoff_path = File.join(pool_dir, "handoff.json")
-    @out.puts "  #{pool_id}: fulfillment starting..."
+    target_workers = dry_run ? nil : resume_worker_target(pool:, campaign_dir:)
+    @out.puts "  #{pool_id}: fulfillment starting#{target_workers ? " at worker prefix #{target_workers}" : ""}..."
     flush(@out)
+    fulfillment_started = @monotonic_clock.call
     fulfilled = @fulfillment_launcher.call(
       plan_path:,
       pool_id:,
       handoff_path:,
-      dry_run:
+      dry_run:,
+      target_workers:
     )
+    initial_fulfillment_seconds = [@monotonic_clock.call - fulfillment_started, 0.001].max
     unless File.file?(handoff_path)
       row["status"] = "fulfillment_failed"
       row["detail"] = "fulfillment exited without a handoff artifact"
@@ -279,17 +290,22 @@ class ProductionBurstRunner
     end
 
     requirements = pool.fetch("requirements")
-    workers = Array(result.fetch("worker_indices")).map { |value| Integer(value) }.uniq.sort
-    raise Error, "#{pool_id}: ready fulfillment returned no workers" if workers.empty?
+    workers = normalize_contiguous_worker_prefix(
+      result.fetch("worker_indices"),
+      "#{pool_id} ready fulfillment workers"
+    )
+    campaign_workers = campaign_initial_workers(campaign_dir, workers)
     pid = @campaign_launcher.launch(
       pool_id:,
-      workers:,
+      workers: campaign_workers,
       execution_handle: result.fetch("execution_handle"),
       requirements:,
       jobs_path:,
       campaign_dir:,
       queue_dir:,
-      keep_fleet: keep_fleets
+      keep_fleet: keep_fleets,
+      plan_path: relative_path(plan_path),
+      initial_fulfillment_seconds:
     )
     children[pool_id] = pid
     row["status"] = "running"
@@ -297,7 +313,7 @@ class ProductionBurstRunner
     row["campaign_output"] = relative_path(campaign_dir)
     row["detail"] = "campaign launched"
     write_ledger(ledger_path, ledger)
-    @out.puts "  #{pool_id}: READY on #{workers.length} worker(s); scoring pid #{pid} launched."
+    @out.puts "  #{pool_id}: READY prefix #{workers.join(', ')}; dispatch starts on #{campaign_workers.join(', ')}; scoring pid #{pid} launched."
     flush(@out)
   end
 
@@ -368,6 +384,89 @@ class ProductionBurstRunner
       raise Error, "existing child jobs differ: #{path}; plan/output identity is not resumable"
     end
     write_atomic(path, content) unless File.file?(path)
+  end
+
+  def resume_worker_target(pool:, campaign_dir:)
+    desired = Integer(pool.dig("capacity", "desired_workers"))
+    recovered = recovered_dispatch_worker_prefix(campaign_dir)
+    pending = pending_expansion_target(campaign_dir)
+    target = [1, recovered.length, pending.to_i].max
+    if target > desired
+      raise Error,
+            "recovered worker prefix #{target} exceeds frozen desired capacity #{desired} for #{pool.fetch('pool_id')}"
+    end
+    target
+  rescue ArgumentError, TypeError
+    raise Error, "invalid worker-capacity state while resuming #{pool.fetch('pool_id')}"
+  end
+
+  def campaign_initial_workers(campaign_dir, fallback)
+    manifest_path = File.join(campaign_dir, "manifest.json")
+    return normalize_contiguous_worker_prefix(fallback, "new dispatch workers") unless File.file?(manifest_path)
+
+    manifest = load_json(manifest_path, "existing dispatch manifest")
+    initial = normalize_contiguous_worker_prefix(
+      manifest.fetch("worker_indices"),
+      "existing dispatch initial workers"
+    )
+    available = normalize_contiguous_worker_prefix(fallback, "ready fulfillment workers")
+    unless (initial - available).empty?
+      raise Error,
+            "existing dispatch initial workers #{initial.inspect} are not present in ready prefix #{available.inspect}"
+    end
+    initial
+  end
+
+  def recovered_dispatch_worker_prefix(campaign_dir)
+    manifest_path = File.join(campaign_dir, "manifest.json")
+    return [] unless File.file?(manifest_path)
+
+    manifest = load_json(manifest_path, "existing dispatch manifest")
+    indices = normalize_contiguous_worker_prefix(
+      manifest.fetch("worker_indices"),
+      "existing dispatch initial workers"
+    )
+    admissions_path = File.join(campaign_dir, "worker-admissions.jsonl")
+    if File.file?(admissions_path)
+      File.readlines(admissions_path, chomp: true).reject(&:empty?).each_with_index do |line, offset|
+        event = JSON.parse(line)
+        next unless event["status"].to_s == "admitted"
+        indices << Integer(event.fetch("worker_index"))
+      rescue JSON::ParserError, KeyError, ArgumentError, TypeError => e
+        raise Error, "invalid worker admission evidence line #{offset + 1}: #{e.message}"
+      end
+    end
+    normalize_contiguous_worker_prefix(indices, "recovered dispatch worker prefix")
+  end
+
+  def pending_expansion_target(campaign_dir)
+    path = File.join(campaign_dir, "worker-expansion.jsonl")
+    return nil unless File.file?(path)
+
+    pending = nil
+    File.readlines(path, chomp: true).reject(&:empty?).each_with_index do |line, offset|
+      event = JSON.parse(line)
+      case event["event"].to_s
+      when "preparing", "prepared"
+        pending = Integer(event.fetch("target_worker"))
+      when "admitted", "rollback"
+        target = Integer(event["target_worker"]) if event["target_worker"]
+        pending = nil if target.nil? || pending.nil? || target == pending
+      end
+    rescue JSON::ParserError, KeyError, ArgumentError, TypeError => e
+      raise Error, "invalid worker expansion evidence line #{offset + 1}: #{e.message}"
+    end
+    pending
+  end
+
+  def normalize_contiguous_worker_prefix(values, label)
+    indices = Array(values).map { |value| Integer(value) }.uniq.sort
+    raise Error, "#{label} cannot be empty" if indices.empty?
+    expected = (1..indices.length).to_a
+    raise Error, "#{label} must be a contiguous prefix #{expected.inspect}, got #{indices.inspect}" unless indices == expected
+    indices
+  rescue ArgumentError, TypeError
+    raise Error, "#{label} must contain positive integer worker indices"
   end
 
   def initial_ledger(plan_path, plan_sha, plan)

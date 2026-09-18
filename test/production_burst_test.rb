@@ -35,14 +35,17 @@ class ProductionBurstTest < Minitest::Test
 
   class FakeFulfillmentLauncher
     attr_reader :calls
+    attr_reader :targets
 
     def initialize(fail_pool: nil)
       @fail_pool = fail_pool
       @calls = []
+      @targets = []
     end
 
-    def call(plan_path:, pool_id:, handoff_path:, dry_run:)
+    def call(plan_path:, pool_id:, handoff_path:, dry_run:, target_workers: nil)
       @calls << pool_id
+      @targets << target_workers
       plan_sha = Digest::SHA256.file(plan_path).hexdigest
       failed = !dry_run && pool_id == @fail_pool
       result = if dry_run
@@ -66,7 +69,7 @@ class ProductionBurstTest < Minitest::Test
                    "ready" => true,
                    "status" => "ready",
                    "execution_handle" => "ep-#{pool_id}",
-                   "worker_indices" => [1],
+                   "worker_indices" => (1..Integer(target_workers || 1)).to_a,
                    "detail" => "ready"
                  }
                end
@@ -99,7 +102,8 @@ class ProductionBurstTest < Minitest::Test
       @next_pid = 10_000
     end
 
-    def launch(pool_id:, workers:, execution_handle:, requirements:, jobs_path:, campaign_dir:, queue_dir:, keep_fleet:)
+    def launch(pool_id:, workers:, execution_handle:, requirements:, jobs_path:, campaign_dir:, queue_dir:, keep_fleet:,
+               plan_path:, initial_fulfillment_seconds:)
       @launches << {
         pool_id:,
         workers:,
@@ -108,7 +112,9 @@ class ProductionBurstTest < Minitest::Test
         jobs_path:,
         campaign_dir:,
         queue_dir:,
-        keep_fleet:
+        keep_fleet:,
+        plan_path:,
+        initial_fulfillment_seconds:
       }
       @next_pid += 1
       pid = @next_pid
@@ -187,6 +193,77 @@ class ProductionBurstTest < Minitest::Test
     assert_includes out, "qwen35: model_ref=qwen runtime=qwen3.6:35b-a3b digest=#{DIGEST}"
     assert_includes out, "gemma4: model_ref=gemma runtime=gemma4:26b digest=#{DIGEST}"
     assert_includes out, "gpt-oss: model_ref=gptoss runtime=gpt-oss:20b digest=#{DIGEST}"
+  end
+
+  def test_paid_burst_starts_campaign_with_one_worker_and_passes_expansion_context
+    build_fixture(pools: [POOLS.first])
+    plan_path = File.join(@tmp, "output", "plan.json")
+    document = JSON.parse(File.read(plan_path))
+    document.dig("pools", 0, "capacity")["desired_workers"] = 4
+    document.dig("pools", 0, "capacity")["minimum_workers"] = 2
+    File.write(plan_path, JSON.pretty_generate(document) + "\n")
+
+    fulfillment = FakeFulfillmentLauncher.new
+    campaign = FakeCampaignLauncher.new
+    clock = 0.0
+    runner = ProductionBurstRunner.new(
+      root: @tmp,
+      preflight: FakePreflight.new,
+      fulfillment_launcher: fulfillment,
+      campaign_launcher: campaign,
+      out: StringIO.new,
+      err: StringIO.new,
+      monotonic_clock: -> { clock += 5.0 }
+    )
+
+    result = runner.run(
+      plan: "output/plan.json",
+      output: "output/burst-starter",
+      dry_run: false,
+      keep_fleets: false
+    )
+
+    assert_equal 0, result.exit_status
+    assert_equal [1], fulfillment.targets
+    launch = campaign.launches.fetch(0)
+    assert_equal [1], launch.fetch(:workers)
+    assert_equal "output/plan.json", launch.fetch(:plan_path)
+    assert_in_delta 5.0, launch.fetch(:initial_fulfillment_seconds), 0.001
+  end
+
+  def test_resume_recovers_admitted_prefix_and_pending_prepare_but_reuses_original_dispatch_initial_workers
+    build_fixture(pools: [POOLS.first])
+    plan_path = File.join(@tmp, "output", "plan.json")
+    document = JSON.parse(File.read(plan_path))
+    document.dig("pools", 0, "capacity")["desired_workers"] = 4
+    document.dig("pools", 0, "capacity")["minimum_workers"] = 1
+    File.write(plan_path, JSON.pretty_generate(document) + "\n")
+
+    campaign_dir = File.join(@tmp, "output", "burst-resume", "pools", "qwen35", "campaign")
+    FileUtils.mkdir_p(campaign_dir)
+    File.write(File.join(campaign_dir, "manifest.json"), JSON.generate("worker_indices" => [1]))
+    File.write(
+      File.join(campaign_dir, "worker-admissions.jsonl"),
+      [2, 3].map { |index| JSON.generate("status" => "admitted", "worker_index" => index) }.join("\n") + "\n"
+    )
+    File.write(
+      File.join(campaign_dir, "worker-expansion.jsonl"),
+      JSON.generate("event" => "preparing", "target_worker" => 4) + "\n"
+    )
+
+    fulfillment = FakeFulfillmentLauncher.new
+    campaign = FakeCampaignLauncher.new
+    result, = run_runner(
+      fulfillment:,
+      campaign:,
+      output: "output/burst-resume"
+    )
+
+    assert_equal 0, result.exit_status
+    assert_equal [4], fulfillment.targets
+    launch = campaign.launches.fetch(0)
+    assert_equal [1], launch.fetch(:workers)
+    assert_equal "ep-qwen35", launch.fetch(:execution_handle)
   end
 
   def test_cli_smoke_wires_preflight_fulfillment_and_campaign_children
