@@ -20,10 +20,31 @@ class ProductionBacklogSourcePreflightTest < Minitest::Test
     FileUtils.mkdir_p(File.join(@root, "experiments", "queue"))
     FileUtils.mkdir_p(File.join(@root, "production_backlog", "queue"))
     FileUtils.mkdir_p(File.join(@root, "scorer", "bin"))
+    FileUtils.mkdir_p(File.join(@root, "scorer", "config"))
     File.write(File.join(@root, "scorer", "bin", "af-score"), "#!/bin/sh\n")
     File.write(
+      File.join(@root, "scorer", "config", "default.yml"),
+      YAML.dump(
+        "paths" => {
+          "xlsx_root" => File.join(@root, "xlsx"),
+          "source_root" => File.join(@root, "sources")
+        },
+        "files" => {
+          "catalog" => "catalog.xlsx",
+          "source_registry" => "source_registry.yml"
+        },
+        "source" => { "allow_full_source_fallback" => false }
+      )
+    )
+    File.write(
       File.join(@root, "config", "models.yml"),
-      YAML.dump("models" => { "qwen" => { "ollama_model" => "qwen3.6:35b-a3b" } })
+      YAML.dump(
+        "models" => {
+          "qwen" => { "ollama_model" => "qwen3.6:35b-a3b" },
+          "gptoss" => { "ollama_model" => "gpt-oss:20b" },
+          "gemma" => { "ollama_model" => "gemma4:26b" }
+        }
+      )
     )
   end
 
@@ -31,36 +52,139 @@ class ProductionBacklogSourcePreflightTest < Minitest::Test
     FileUtils.remove_entry(@root)
   end
 
-  def test_preflights_each_unique_runtime_source_context_once
-    first = write_manifest("levels", "Levels", "ADV-0059")
-    second = write_manifest("combat", "Combat Emphasis", "ADV-0059")
-    write_order(first, second)
+  def test_deduplicates_ordinary_source_across_dimension_model_and_runtime_variants
+    write_runtime("a", catalog: "catalog.xlsx", llm: { "reasoning_effort" => "high", "max_tokens" => 8192 })
+    write_runtime("b", catalog: "catalog.xlsx", llm: { "reasoning_effort" => "low", "max_tokens" => 4096 })
+    write_runtime("c", catalog: "catalog.xlsx", llm: { "reasoning_effort" => "medium", "max_tokens" => 16_384 })
+    first = write_manifest(
+      "combat", "Combat Emphasis", "ADV-0059",
+      model: "qwen", extra_args: ["--config", "${LME_REPO}/runtime-a.yml"]
+    )
+    second = write_manifest(
+      "exploration", "Exploration Emphasis", "ADV-0059",
+      model: "gptoss", extra_args: ["--config", "${LME_REPO}/runtime-b.yml"]
+    )
+    third = write_manifest(
+      "seriousness", "Seriousness", "ADV-0059",
+      model: "gemma", extra_args: ["--config", "${LME_REPO}/runtime-c.yml"]
+    )
+    write_order(first, second, third)
 
     calls = []
-    runner = lambda do |env, command, chdir|
-      calls << [env, command, chdir]
-      ["ok", "", FakeStatus.new(true)]
-    end
     out = StringIO.new
-    err = StringIO.new
-
     ok = LocalModelEvaluation::ProductionBacklogSourcePreflight.new(
       root: @root,
       io: out,
-      err: err,
-      command_runner: runner
+      err: StringIO.new,
+      command_runner: lambda do |env, command, chdir|
+        calls << [env, command, chdir]
+        ["ok", "", FakeStatus.new(true)]
+      end
     ).run("production_backlog/queue")
 
     assert ok
     assert_equal 1, calls.length
-    _env, command, chdir = calls.fetch(0)
-    assert_equal File.join(@root, "scorer"), chdir
-    assert_equal File.join(@root, "scorer", "bin", "af-score"), command.fetch(0)
-    assert_includes command, "qwen3.6:35b-a3b"
-    assert_includes command, "--preflight"
-    assert_includes command, "ADV-0059"
-    assert_match(/Runtime source preflight: PASS/, out.string)
-    assert_empty err.string
+    assert_match(/1 unique adventure source checked/, out.string)
+  end
+
+  def test_prompt_profile_environment_does_not_split_ordinary_source_identity
+    plain = write_manifest("combat", "Combat Emphasis", "ADV-0060")
+    profiled = write_manifest(
+      "social", "Social Interaction Emphasis", "ADV-0060",
+      phase6: {
+        "prompt_profile" => {
+          "version" => "phase6-v0.3",
+          "env_name" => "AF_SOCIAL_INTERACTION_GUARDRAIL_PROFILE",
+          "env_value" => "phase6-v0.3"
+        }
+      }
+    )
+    write_order(plain, profiled)
+
+    calls = []
+    ok = LocalModelEvaluation::ProductionBacklogSourcePreflight.new(
+      root: @root,
+      io: StringIO.new,
+      err: StringIO.new,
+      command_runner: lambda do |*args|
+        calls << args
+        ["ok", "", FakeStatus.new(true)]
+      end
+    ).run("production_backlog/queue")
+
+    assert ok
+    assert_equal 1, calls.length
+  end
+
+  def test_different_adventure_ids_get_separate_source_checks
+    first = write_manifest("first", "Combat Emphasis", "ADV-0061")
+    second = write_manifest("second", "Combat Emphasis", "ADV-0062")
+    write_order(first, second)
+
+    calls = []
+    ok = LocalModelEvaluation::ProductionBacklogSourcePreflight.new(
+      root: @root,
+      io: StringIO.new,
+      err: StringIO.new,
+      command_runner: lambda do |*args|
+        calls << args
+        ["ok", "", FakeStatus.new(true)]
+      end
+    ).run("production_backlog/queue")
+
+    assert ok
+    assert_equal 2, calls.length
+  end
+
+  def test_source_changing_catalog_input_gets_separate_check
+    write_runtime("catalog-a", catalog: "catalog-a.xlsx")
+    write_runtime("catalog-b", catalog: "catalog-b.xlsx")
+    first = write_manifest(
+      "first", "Combat Emphasis", "ADV-0063",
+      extra_args: ["--config", "${LME_REPO}/runtime-catalog-a.yml"]
+    )
+    second = write_manifest(
+      "second", "Exploration Emphasis", "ADV-0063",
+      extra_args: ["--config", "${LME_REPO}/runtime-catalog-b.yml"]
+    )
+    write_order(first, second)
+
+    calls = []
+    ok = LocalModelEvaluation::ProductionBacklogSourcePreflight.new(
+      root: @root,
+      io: StringIO.new,
+      err: StringIO.new,
+      command_runner: lambda do |*args|
+        calls << args
+        ["ok", "", FakeStatus.new(true)]
+      end
+    ).run("production_backlog/queue")
+
+    assert ok
+    assert_equal 2, calls.length
+  end
+
+  def test_levels_keeps_a_distinct_source_context_for_precanonical_material
+    ordinary = write_manifest("combat", "Combat Emphasis", "ADV-0064")
+    levels = write_manifest("levels", "Levels", "ADV-0064")
+    write_order(ordinary, levels)
+
+    calls = []
+    out = StringIO.new
+    ok = LocalModelEvaluation::ProductionBacklogSourcePreflight.new(
+      root: @root,
+      io: out,
+      err: StringIO.new,
+      command_runner: lambda do |env, command, chdir|
+        calls << [env, command, chdir]
+        ["ok", "", FakeStatus.new(true)]
+      end
+    ).run("production_backlog/queue")
+
+    assert ok
+    assert_equal 2, calls.length
+    assert_equal ["Combat Emphasis", "Levels"], calls.map { |_env, command, _chdir| command.fetch(4) }
+    assert_match(/2 unique adventure sources checked/, out.string)
   end
 
   def test_explicit_manifest_selection_checks_only_selected_entries_in_frozen_order
@@ -84,7 +208,7 @@ class ProductionBacklogSourcePreflightTest < Minitest::Test
     assert ok
     assert_equal %w[ADV-0401 ADV-0403], calls.map { |_env, command, _chdir| command.fetch(6) }
     refute_includes out.string, File.basename(second)
-    assert_match(/2 unique source contexts checked/, out.string)
+    assert_match(/2 unique adventure sources checked/, out.string)
   end
 
   def test_explicit_manifest_selection_rejects_entries_outside_frozen_run_order
@@ -157,7 +281,7 @@ class ProductionBacklogSourcePreflightTest < Minitest::Test
     assert ok
     assert_equal 1, calls.length
     assert_includes calls.fetch(0).fetch(1), "ADV-0103"
-    assert_match(/1 unique source context checked/, out.string)
+    assert_match(/1 unique adventure source checked/, out.string)
     assert_match(/2 terminal manifests skipped/, out.string)
     assert_match(/1 nonterminal manifest considered/, out.string)
   end
@@ -187,7 +311,7 @@ class ProductionBacklogSourcePreflightTest < Minitest::Test
     assert ok
     assert_equal 3, calls.length
     assert_equal %w[ADV-0201 ADV-0202 ADV-0203], calls.map { |_env, command, _chdir| command.fetch(6) }
-    assert_match(/3 unique source contexts checked/, out.string)
+    assert_match(/3 unique adventure sources checked/, out.string)
     assert_match(/0 terminal manifests skipped/, out.string)
     assert_match(/3 nonterminal manifests considered/, out.string)
   end
@@ -215,7 +339,7 @@ class ProductionBacklogSourcePreflightTest < Minitest::Test
 
     assert ok
     assert_empty calls
-    assert_match(/0 unique source contexts checked/, out.string)
+    assert_match(/0 unique adventure sources checked/, out.string)
     assert_match(/2 terminal manifests skipped/, out.string)
     assert_match(/0 nonterminal manifests considered/, out.string)
     assert_empty err.string
@@ -264,12 +388,12 @@ class ProductionBacklogSourcePreflightTest < Minitest::Test
 
   private
 
-  def write_manifest(slug, dimension, adventure, extra_args: [], phase6: nil)
+  def write_manifest(slug, dimension, adventure, model: "qwen", extra_args: [], phase6: nil)
     path = File.join(@root, "experiments", "queue", "#{slug}.yml")
     data = {
       "name" => "queue-#{slug}",
       "dispatch" => "pool",
-      "models" => ["qwen"],
+      "models" => [model],
       "dimension" => dimension,
       "adventures" => [adventure],
       "replicates" => 1,
@@ -283,6 +407,20 @@ class ProductionBacklogSourcePreflightTest < Minitest::Test
     data["phase6_contract"] = phase6 if phase6
     File.write(path, YAML.dump(data))
     Pathname.new(path).relative_path_from(Pathname.new(@root)).to_s
+  end
+
+  def write_runtime(slug, catalog:, llm: {})
+    File.write(
+      File.join(@root, "runtime-#{slug}.yml"),
+      YAML.dump(
+        "llm" => llm,
+        "files" => { "catalog" => catalog },
+        "source" => {
+          "allow_inward_boundary_clamp_adventure_ids" => [],
+          "inward_boundary_clamp_max_gap_by_adventure" => {}
+        }
+      )
+    )
   end
 
   def write_status(slug, *statuses)
