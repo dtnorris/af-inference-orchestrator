@@ -1,16 +1,12 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-require "fileutils"
-require "json"
 require "optparse"
-require "yaml"
 
 ROOT = File.expand_path(ENV.fetch("LME_REPO", File.expand_path("..", __dir__)))
 ENV["LME_REPO"] = ROOT
 $LOAD_PATH.unshift File.join(ROOT, "lib")
-require "production_backlog_runner_policy"
-require "production_backlog_remote_campaign"
+require "production_backlog_remote_runner"
 require "local_model_evaluation/rpof_client"
 
 opts = { workers: nil, all: false, output: nil, fleet: nil, group_by_model: false, context: ENV.fetch("LME_RUNPOD_REQUIRED_CONTEXT", "131072").to_i }
@@ -39,118 +35,23 @@ rescue OptionParser::ParseError => e
   exit 2
 end
 
-queue_dir = File.expand_path(queue_arg, ROOT)
-order_path = File.join(queue_dir, "run_order.txt")
-snapshot_path = File.join(queue_dir, "snapshot.yml")
-abort "ERROR: missing #{order_path}" unless File.file?(order_path)
-abort "ERROR: missing #{snapshot_path}" unless File.file?(snapshot_path)
-
-contract_type = ProductionBacklogRunnerPolicy.contract_type_from_snapshot(snapshot_path)
-verifier_rel = ProductionBacklogRunnerPolicy.verifier_for(contract_type)
-verifier = File.join(ROOT, verifier_rel)
-source_preflight = File.join(ROOT, "bin", "preflight-production-backlog-sources")
-abort "ERROR: missing/executable verifier #{verifier}" unless File.executable?(verifier)
-abort "ERROR: missing/executable runtime source preflight #{source_preflight}" unless File.executable?(source_preflight)
-
-unless system({ "LME_REPO" => ROOT }, verifier, queue_arg, chdir: ROOT)
-  abort "ERROR: backlog preflight failed. No remote inference launched."
-end
-unless system({ "LME_REPO" => ROOT }, source_preflight, queue_arg, chdir: ROOT)
-  abort "ERROR: runtime source preflight failed. No remote inference launched."
-end
-
-manifests = File.readlines(order_path, chomp: true).reject { |line| line.strip.empty? }
-abort "ERROR: frozen queue is empty: #{order_path}" if manifests.empty?
-
-fleet_key = opts[:fleet] || ENV.fetch("LME_RUNPOD_FLEET", "default")
-worker_selector = if opts[:all]
-                    { "mode" => "all" }
-                  else
-                    {
-                      "mode" => "indices",
-                      "indices" => LocalModelEvaluation::RpofClient.expand_worker_selector(opts.fetch(:workers))
-                    }
-                  end
+runner = ProductionBacklogRemoteRunner::Runner.new(
+  repo_root: ROOT,
+  preflight: ProductionBacklogRemoteRunner::ProcessPreflight.new(repo_root: ROOT),
+  client: LocalModelEvaluation::RpofClient.new(repo_root: ROOT)
+)
 
 begin
-  plan = ProductionBacklogRemoteCampaign.build_plan(
-    repo_root: ROOT,
-    contract_type:,
-    manifests:,
+  exit runner.run(
+    queue_arg:,
+    workers: opts[:workers],
+    all: opts[:all],
+    output: opts.fetch(:output),
+    fleet: opts[:fleet],
     group_by_model: opts[:group_by_model],
-    fleet_key:,
-    worker_selector:,
-    required_context: opts.fetch(:context)
+    context: opts.fetch(:context)
   )
-rescue ProductionBacklogRemoteCampaign::Error => e
-  abort "ERROR: #{e.message}"
-end
-jobs = plan.fetch("jobs")
-qualified_models = plan.fetch("qualified_models")
-
-output_dir = File.expand_path(opts.fetch(:output), ROOT)
-jobs_path = "#{output_dir}.jobs.json"
-FileUtils.mkdir_p(File.dirname(jobs_path))
-jobs_content = JSON.pretty_generate("jobs" => jobs) + "\n"
-if File.file?(jobs_path) && File.read(jobs_path) != jobs_content
-  abort "ERROR: existing remote campaign jobs differ: #{jobs_path}; use a new --output path"
-end
-unless File.file?(jobs_path)
-  tmp = "#{jobs_path}.tmp.#{$$}"
-  begin
-    File.write(tmp, jobs_content)
-    File.rename(tmp, jobs_path)
-  ensure
-    File.delete(tmp) if File.exist?(tmp)
-  end
-end
-
-ENV["AF_SOCIAL_INTERACTION_GUARDRAIL_PROFILE"] = "phase6-v0.3"
-ENV["AF_INVESTIGATION_GUARDRAIL_PROFILE"] = "phase6-v0.4"
-
-client = LocalModelEvaluation::RpofClient.new(repo_root: ROOT)
-
-begin
-  capability = client.capability_check(plan.fetch("capability_request"))
-rescue LocalModelEvaluation::RpofClient::Error => e
-  abort "ERROR: RPOF capability bridge failed: #{e.message}"
-end
-unless capability.fetch("ready")
-  details = capability.fetch("diagnostics").select { |row| row["status"] == "FAIL" }.map { |row| "#{row['code']}: #{row['detail']}" }
-  abort "ERROR: RPOF capability check failed: #{details.join('; ')}"
-end
-
-dispatch_request = ProductionBacklogRemoteCampaign.build_dispatch_request(plan:, capability:)
-
-puts "Remote production campaign"
-puts "  Queue: #{queue_arg}"
-puts "  Frozen manifests: #{jobs.length}"
-puts "  Dispatch evidence: #{output_dir}"
-puts "  Job ledger: #{jobs_path}"
-puts "  Model grouping: #{opts[:group_by_model] ? 'enabled' : 'disabled (FIFO)'}"
-puts "  Qualified artifacts:"
-qualified_models.each do |model|
-  puts "    #{model.fetch('model_ref')}: runtime=#{model.fetch('ollama_model')} pull=#{model.fetch('pull_model')} digest=#{model.fetch('expected_digest')}"
-end
-puts "  RPOF fleet: #{fleet_key} / #{capability.fetch('fleet_id')}"
-puts "  RPOF workers: #{capability.fetch('selected_worker_indices').join(', ')}"
-puts "  Frozen manifests are read-only; remote routing is execution-time only."
-
-begin
-  summary, _rpof_exit, stdout, stderr = client.dispatch(
-    request: dispatch_request,
-    workdir: ROOT,
-    output_dir: output_dir
-  )
-  $stdout.write(stdout) unless stdout.empty?
-  $stderr.write(stderr) unless stderr.empty?
-rescue LocalModelEvaluation::RpofClient::Error => e
-  warn "ERROR: RPOF dispatch bridge failed: #{e.message}"
+rescue ProductionBacklogRemoteRunner::Error => e
+  warn "ERROR: #{e.message}"
   exit 1
-end
-
-case summary.fetch("status")
-when "completed" then exit 0
-when "workload_failed" then exit 2
-else exit 1
 end
