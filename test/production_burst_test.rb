@@ -143,6 +143,25 @@ class ProductionBurstTest < Minitest::Test
     def wait_after_interrupt(_pid); end
   end
 
+  class FakeBudgetLifecycle
+    attr_reader :starts, :finishes
+
+    def initialize
+      @starts = []
+      @finishes = []
+    end
+
+    def start!(budget:)
+      @starts << budget
+      { "state" => "ARMED", "mutation_allowed" => true }
+    end
+
+    def finish!(reason:)
+      @finishes << reason
+      true
+    end
+  end
+
   def setup
     @tmp = Dir.mktmpdir("production-burst-")
   end
@@ -249,6 +268,7 @@ class ProductionBurstTest < Minitest::Test
       campaign_launcher: campaign,
       out: StringIO.new,
       err: StringIO.new,
+      budget_lifecycle: FakeBudgetLifecycle.new,
       monotonic_clock: -> { clock += 5.0 }
     )
 
@@ -307,8 +327,12 @@ class ProductionBurstTest < Minitest::Test
     copy("bin/lme-production-burst")
     copy("lib/production_burst_runner.rb")
     copy("lib/production_burst_budget_contract.rb")
+    copy("lib/production_budget_heartbeat.rb")
+    copy("lib/production_budget_lifecycle.rb")
+    copy("lib/local_model_evaluation/rpof_client.rb")
     copy("lib/production_backlog_runner_policy.rb")
     copy("lib/production_backlog_runtime_contract.rb")
+    fake_rpof_budget_child
     executable("bin/verify-production-backlog", <<~'SH')
       #!/bin/sh
       set -eu
@@ -352,7 +376,8 @@ class ProductionBurstTest < Minitest::Test
       fulfillment_launcher: fulfillment,
       campaign_launcher: campaign,
       out:,
-      err:
+      err:,
+      budget_lifecycle: FakeBudgetLifecycle.new
     )
     result = runner.run(
       plan: "output/plan.json",
@@ -381,6 +406,37 @@ class ProductionBurstTest < Minitest::Test
     FileUtils.mkdir_p(File.dirname(target))
     File.write(target, content)
     FileUtils.chmod(0o755, target)
+  end
+
+  def fake_rpof_budget_child
+    executable("bin/lme-rpof", <<~'SH')
+      #!/bin/sh
+      set -eu
+      command=${1:-}
+      subcommand=${2:-}
+      if [ "$command" != "budget" ]; then
+        echo "unexpected command: $*" >&2
+        exit 2
+      fi
+      case "$subcommand" in
+        arm)
+          printf '%s\n' '{"state":"ARMED","mutation_allowed":true}'
+          ;;
+        heartbeat)
+          printf '%s\n' '{"state":"ARMED","mutation_allowed":true}'
+          ;;
+        begin-teardown)
+          printf '%s\n' '{"state":"TEARDOWN_REQUIRED","mutation_allowed":false}'
+          ;;
+        status)
+          printf '%s\n' '{"state":"ARMED","mutation_allowed":true}'
+          ;;
+        *)
+          echo "unexpected budget subcommand: $subcommand" >&2
+          exit 2
+          ;;
+      esac
+    SH
   end
 
   def fake_fulfill_child

@@ -157,14 +157,23 @@ class RpofClientTest < Minitest::Test
       calls
     )
 
-    unconfigured = CLIENT.new(repo_root: @tmp, executable: @fake)
-    error = assert_raises(CLIENT::Error) do
-      unconfigured.heartbeat_budget(
-        budget_id: "budget-fixture",
-        plan_sha256: "a" * 64
-      )
-    end
-    assert_includes error.message, "heartbeat transport is not configured"
+    File.write(@fake, <<~'SH')
+      #!/bin/sh
+      set -eu
+      if [ "$1" = "budget" ] && [ "$2" = "heartbeat" ]; then
+        printf '%s\n' '{"state":"ARMED","mutation_allowed":true}'
+        exit 0
+      fi
+      echo "unexpected command: $*" >&2
+      exit 2
+    SH
+    FileUtils.chmod(0o755, @fake)
+    default_transport = CLIENT.new(repo_root: @tmp, executable: @fake)
+    result = default_transport.heartbeat_budget(
+      budget_id: "budget-fixture",
+      plan_sha256: "a" * 64
+    )
+    assert_equal "ARMED", result.fetch("state")
   end
 
   def test_dispatch_can_stream_subprocess_output_and_still_read_summary

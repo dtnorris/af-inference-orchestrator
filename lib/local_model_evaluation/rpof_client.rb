@@ -85,6 +85,15 @@ module LocalModelEvaluation
       raise Error, "RPOF execution-pool result is invalid JSON: #{e.message}"
     end
 
+    def arm_budget(budget:)
+      with_json_file("budget" => budget) do |request_path|
+        run_budget_command(
+          ["arm", "--request", request_path],
+          label: "arm"
+        )
+      end
+    end
+
     def heartbeat_budget(budget_id:, plan_sha256:)
       id = budget_id.to_s
       sha = plan_sha256.to_s
@@ -92,10 +101,37 @@ module LocalModelEvaluation
       unless sha.match?(/\A[0-9a-f]{64}\z/i)
         raise Error, "production budget heartbeat requires an exact 64-hex plan_sha256"
       end
-      unless @budget_heartbeat
-        raise Error, "RPOF production budget heartbeat transport is not configured"
+      if @budget_heartbeat
+        return @budget_heartbeat.call(budget_id: id, plan_sha256: sha.downcase)
       end
-      @budget_heartbeat.call(budget_id: id, plan_sha256: sha.downcase)
+      run_budget_command(
+        [
+          "heartbeat",
+          "--budget-id", id,
+          "--plan-sha256", sha.downcase,
+          "--source", "orchestrator"
+        ],
+        label: "heartbeat"
+      )
+    end
+
+    def begin_budget_teardown(budget_id:, plan_sha256:, reason:)
+      run_budget_command(
+        [
+          "begin-teardown",
+          "--budget-id", budget_id.to_s,
+          "--plan-sha256", plan_sha256.to_s.downcase,
+          "--reason", reason.to_s
+        ],
+        label: "begin-teardown"
+      )
+    end
+
+    def budget_status(budget_id:, plan_sha256:)
+      run_budget_command(
+        ["status", "--budget-id", budget_id.to_s, "--plan-sha256", plan_sha256.to_s.downcase],
+        label: "status"
+      )
     end
 
     def dispatch(request:, workdir:, output_dir:, stream_output: false, dynamic_worker_admission: false)
@@ -296,6 +332,21 @@ module LocalModelEvaluation
     end
 
     private
+
+    def run_budget_command(arguments, label:)
+      stdout, stderr, status = Open3.capture3(
+        @executable, "budget", *arguments,
+        chdir: @repo_root
+      )
+      unless status.success?
+        detail = stderr.to_s.strip
+        detail = stdout.to_s.strip if detail.empty?
+        raise Error, "RPOF production budget #{label} failed (exit #{status.exitstatus}): #{detail}"
+      end
+      JSON.parse(stdout)
+    rescue JSON::ParserError => e
+      raise Error, "RPOF production budget #{label} returned invalid JSON: #{e.message}"
+    end
 
     def with_json_file(document)
       Tempfile.create(["rpof-request", ".json"]) do |file|

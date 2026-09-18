@@ -7,6 +7,7 @@ require "pathname"
 require "yaml"
 require_relative "production_backlog_runner_policy"
 require_relative "production_burst_budget_contract"
+require_relative "production_budget_lifecycle"
 
 class ProductionBurstRunner
   PLAN_CONTRACT = "afio-production-execution-pool-plan/v0.1"
@@ -131,7 +132,7 @@ class ProductionBurstRunner
   end
 
   def initialize(root:, preflight: nil, fulfillment_launcher: nil, campaign_launcher: nil, out: $stdout, err: $stderr,
-                 monotonic_clock: nil)
+                 monotonic_clock: nil, budget_lifecycle: nil)
     @root = File.expand_path(root)
     @preflight = preflight || SystemPreflight.new(root: @root)
     @fulfillment_launcher = fulfillment_launcher || SystemFulfillmentLauncher.new(root: @root)
@@ -139,6 +140,7 @@ class ProductionBurstRunner
     @out = out
     @err = err
     @monotonic_clock = monotonic_clock || -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }
+    @budget_lifecycle = budget_lifecycle || ProductionBudgetLifecycle.new(root: @root, err: @err)
   end
 
   def run(plan:, output:, dry_run:, keep_fleets: false)
@@ -182,6 +184,17 @@ class ProductionBurstRunner
     @preflight.run!(queue_dir:, contract_type:)
     print_header(plan_path:, plan_sha:, plan: document)
 
+    budget_started = false
+    unless dry_run
+      @budget_lifecycle.start!(
+        budget: ProductionBurstBudgetContract.request_budget(
+          budget:,
+          plan_sha256: plan_sha
+        )
+      )
+      budget_started = true
+    end
+
     children = {}
     begin
       Array(document.fetch("pools")).each do |pool|
@@ -214,12 +227,23 @@ class ProductionBurstRunner
     @out.puts "Production burst: #{ledger.fetch('status')}"
     @out.puts "Ledger: #{ledger_path}"
 
+    if budget_started
+      @budget_lifecycle.finish!(reason: "afio_production_burst_#{ledger.fetch('status')}")
+      budget_started = false
+    end
+
     Result.new(ledger:, exit_status: exit_status_for(ledger.fetch("status")))
   rescue Error
     raise
   rescue JSON::ParserError, Psych::Exception, KeyError, ArgumentError, TypeError, SystemCallError, RuntimeError,
          ProductionBurstBudgetContract::Error => e
     raise Error, e.message
+  ensure
+    if defined?(budget_started) && budget_started
+      status = defined?(ledger) && ledger.is_a?(Hash) ? ledger["status"].to_s : ""
+      status = "aborted" if status.empty? || status == "pending"
+      @budget_lifecycle.finish!(reason: "afio_production_burst_#{status}")
+    end
   end
 
   private
