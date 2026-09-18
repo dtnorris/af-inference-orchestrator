@@ -6,6 +6,7 @@ require "json"
 require "pathname"
 require "yaml"
 require_relative "production_backlog_runner_policy"
+require_relative "production_burst_budget_contract"
 
 class ProductionBurstRunner
   PLAN_CONTRACT = "afio-production-execution-pool-plan/v0.1"
@@ -149,6 +150,8 @@ class ProductionBurstRunner
     unless document["contract_version"] == PLAN_CONTRACT
       raise Error, "unsupported execution-pool plan version: #{document['contract_version'].inspect}"
     end
+    budget = ProductionBurstBudgetContract.validate_declaration!(document.fetch("budget"))
+    budget_identity = ProductionBurstBudgetContract.identity_for(budget:, plan_sha256: plan_sha)
 
     output_dir = within_root(output)
     FileUtils.mkdir_p(output_dir)
@@ -156,11 +159,23 @@ class ProductionBurstRunner
     ledger = if File.file?(ledger_path)
                load_json(ledger_path, "production-burst ledger")
              else
-               initial_ledger(plan_path, plan_sha, document)
+               initial_ledger(plan_path, plan_sha, document, budget_identity)
              end
     unless ledger["contract_version"] == LEDGER_CONTRACT &&
            ledger.dig("plan", "sha256").to_s == plan_sha
       raise Error, "existing parent output belongs to a different execution-pool plan; use a new --output directory"
+    end
+    begin
+      ProductionBurstBudgetContract.validate_identity!(
+        ledger.fetch("budget"),
+        budget:,
+        plan_sha256: plan_sha,
+        label: "production-burst ledger budget identity"
+      )
+    rescue KeyError, ProductionBurstBudgetContract::Error => e
+      raise Error,
+            "existing parent output belongs to a different production budget identity; " \
+            "use a new --output directory (#{e.message})"
     end
 
     queue_dir, contract_type = validate_queue!(document)
@@ -174,6 +189,7 @@ class ProductionBurstRunner
           pool:,
           plan_path:,
           plan_sha:,
+          budget_identity:,
           output_dir:,
           ledger_path:,
           ledger:,
@@ -201,13 +217,14 @@ class ProductionBurstRunner
     Result.new(ledger:, exit_status: exit_status_for(ledger.fetch("status")))
   rescue Error
     raise
-  rescue JSON::ParserError, Psych::Exception, KeyError, ArgumentError, TypeError, SystemCallError, RuntimeError => e
+  rescue JSON::ParserError, Psych::Exception, KeyError, ArgumentError, TypeError, SystemCallError, RuntimeError,
+         ProductionBurstBudgetContract::Error => e
     raise Error, e.message
   end
 
   private
 
-  def run_pool(pool:, plan_path:, plan_sha:, output_dir:, ledger_path:, ledger:, contract_type:, queue_dir:, dry_run:, keep_fleets:, children:)
+  def run_pool(pool:, plan_path:, plan_sha:, budget_identity:, output_dir:, ledger_path:, ledger:, contract_type:, queue_dir:, dry_run:, keep_fleets:, children:)
     pool_id = pool.fetch("pool_id")
     row = ledger.fetch("pools").fetch(pool_id)
     pool_dir = File.join(output_dir, "pools", pool_id)
@@ -266,8 +283,9 @@ class ProductionBurstRunner
     handoff = load_json(handoff_path, "#{pool_id} handoff")
     unless handoff["contract_version"] == HANDOFF_CONTRACT &&
            handoff.dig("plan", "sha256").to_s == plan_sha &&
+           handoff["budget"] == budget_identity &&
            handoff["pool_id"].to_s == pool_id
-      raise Error, "#{pool_id}: fulfillment handoff identity does not match parent plan"
+      raise Error, "#{pool_id}: fulfillment handoff identity does not match parent plan/budget"
     end
     result = handoff.fetch("result")
     row["handoff_path"] = relative_path(handoff_path)
@@ -469,13 +487,14 @@ class ProductionBurstRunner
     raise Error, "#{label} must contain positive integer worker indices"
   end
 
-  def initial_ledger(plan_path, plan_sha, plan)
+  def initial_ledger(plan_path, plan_sha, plan, budget_identity)
     {
       "contract_version" => LEDGER_CONTRACT,
       "plan" => {
         "path" => relative_path(plan_path),
         "sha256" => plan_sha
       },
+      "budget" => budget_identity,
       "queue" => plan.fetch("queue"),
       "status" => "pending",
       "pools" => Array(plan.fetch("pools")).to_h do |pool|
@@ -520,6 +539,7 @@ class ProductionBurstRunner
     @out.puts "AFIO production burst"
     @out.puts "  Plan: #{relative_path(plan_path)}"
     @out.puts "  Plan SHA: #{plan_sha}"
+    @out.puts "  Budget ID: #{plan.dig('budget', 'budget_id')}"
     @out.puts "  Pools: #{Array(plan.fetch('pools')).map { |pool| pool.fetch('pool_id') }.join(', ')}"
     Array(plan.fetch("pools")).each do |pool|
       requirements = pool.fetch("requirements")

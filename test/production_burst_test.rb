@@ -47,6 +47,7 @@ class ProductionBurstTest < Minitest::Test
       @calls << pool_id
       @targets << target_workers
       plan_sha = Digest::SHA256.file(plan_path).hexdigest
+      plan_document = JSON.parse(File.read(plan_path))
       failed = !dry_run && pool_id == @fail_pool
       result = if dry_run
                  {
@@ -79,6 +80,10 @@ class ProductionBurstTest < Minitest::Test
         JSON.pretty_generate(
           "contract_version" => "afio-production-execution-pool-handoff/v0.1",
           "plan" => { "path" => plan_path, "sha256" => plan_sha },
+          "budget" => {
+            "budget_id" => plan_document.dig("budget", "budget_id"),
+            "plan_sha256" => plan_sha
+          },
           "pool_id" => pool_id,
           "request" => {},
           "result" => result.merge(
@@ -188,11 +193,42 @@ class ProductionBurstTest < Minitest::Test
 
     assert_equal 0, result.exit_status
     assert_equal "planned", result.ledger.fetch("status")
+    assert_equal "budget-fixture", result.ledger.dig("budget", "budget_id")
+    assert_equal Digest::SHA256.file(File.join(@tmp, "output", "plan.json")).hexdigest,
+                 result.ledger.dig("budget", "plan_sha256")
     assert_equal %w[qwen35 gemma4 gpt-oss], fulfillment.calls
     assert_empty campaign.launches
     assert_includes out, "qwen35: model_ref=qwen runtime=qwen3.6:35b-a3b digest=#{DIGEST}"
     assert_includes out, "gemma4: model_ref=gemma runtime=gemma4:26b digest=#{DIGEST}"
     assert_includes out, "gpt-oss: model_ref=gptoss runtime=gpt-oss:20b digest=#{DIGEST}"
+  end
+
+  def test_resume_rejects_mismatched_budget_identity
+    build_fixture(pools: [POOLS.first])
+    fulfillment = FakeFulfillmentLauncher.new
+    campaign = FakeCampaignLauncher.new
+    run_runner(
+      fulfillment:,
+      campaign:,
+      dry_run: true,
+      output: "output/budget-resume"
+    )
+
+    ledger_path = File.join(@tmp, "output", "budget-resume", "production-burst.json")
+    ledger = JSON.parse(File.read(ledger_path))
+    ledger.fetch("budget")["budget_id"] = "different-budget"
+    File.write(ledger_path, JSON.pretty_generate(ledger) + "\n")
+
+    error = assert_raises(ProductionBurstRunner::Error) do
+      run_runner(
+        fulfillment: FakeFulfillmentLauncher.new,
+        campaign: FakeCampaignLauncher.new,
+        dry_run: true,
+        output: "output/budget-resume"
+      )
+    end
+    assert_includes error.message, "different production budget identity"
+    assert_includes error.message, "new --output directory"
   end
 
   def test_paid_burst_starts_campaign_with_one_worker_and_passes_expansion_context
@@ -270,6 +306,7 @@ class ProductionBurstTest < Minitest::Test
     build_fixture(pools: [POOLS.first])
     copy("bin/lme-production-burst")
     copy("lib/production_burst_runner.rb")
+    copy("lib/production_burst_budget_contract.rb")
     copy("lib/production_backlog_runner_policy.rb")
     copy("lib/production_backlog_runtime_contract.rb")
     executable("bin/verify-production-backlog", <<~'SH')
@@ -368,11 +405,13 @@ class ProductionBurstTest < Minitest::Test
       printf '%s\n' "$pool" >> "$root/fulfill-calls.txt"
       plan_sha=$(shasum -a 256 "$plan_path")
       plan_sha=${plan_sha%% *}
+      budget_id=$(sed -n 's/^[[:space:]]*"budget_id": "\([^"]*\)".*/\1/p' "$plan_path" | head -n 1)
       mkdir -p "${output%/*}"
       cat > "$output" <<EOF
       {
         "contract_version": "afio-production-execution-pool-handoff/v0.1",
         "plan": { "path": "$plan_path", "sha256": "$plan_sha" },
+        "budget": { "budget_id": "$budget_id", "plan_sha256": "$plan_sha" },
         "pool_id": "$pool",
         "request": {},
         "result": {
@@ -444,6 +483,15 @@ class ProductionBurstTest < Minitest::Test
         "manifest_count" => manifests.length
       },
       "capacity" => { "max_total_hourly_usd" => 6.0 },
+      "budget" => {
+        "contract_version" => "afio-production-burst-budget/v0.1",
+        "budget_id" => "budget-fixture",
+        "max_cumulative_compute_usd" => 5.0,
+        "max_runtime_seconds" => 2700.0,
+        "guardian_poll_seconds" => 5.0,
+        "orchestrator_heartbeat_timeout_seconds" => 30.0,
+        "teardown_reserve_seconds" => 60.0
+      },
       "pools" => pools.each_with_index.map do |(pool_id, model_ref, runtime), index|
         rel, path = manifests.fetch(index)
         {

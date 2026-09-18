@@ -2,10 +2,11 @@
 
 require "digest"
 require "fileutils"
+require_relative "../production_burst_budget_contract"
 
 module LocalModelEvaluation
   class ProductionPoolFulfillment
-    REQUEST_CONTRACT = "afio-rpof-execution-pool-fulfill-request/v0.1"
+    REQUEST_CONTRACT = "afio-rpof-execution-pool-fulfill-request/v0.2"
     HANDOFF_CONTRACT = "afio-production-execution-pool-handoff/v0.1"
 
     Result = Struct.new(:handoff, :rpof_exit, :stdout, :stderr, keyword_init: true)
@@ -40,6 +41,10 @@ module LocalModelEvaluation
             "path" => plan_path,
             "sha256" => request.fetch("plan_sha256")
           },
+          "budget" => {
+            "budget_id" => request.dig("budget", "budget_id"),
+            "plan_sha256" => request.fetch("plan_sha256")
+          },
           "pool_id" => pool.fetch("pool_id"),
           "request" => request,
           "result" => result
@@ -61,9 +66,15 @@ module LocalModelEvaluation
         raise ArgumentError, "target workers #{target} exceeds planned desired workers #{planned_desired}"
       end
       minimum = target_workers.nil? ? capacity.fetch("minimum_workers") : target
+      plan_sha = ProductionBurstBudgetContract.plan_sha256(plan_bytes)
+      budget = ProductionBurstBudgetContract.request_budget(
+        budget: plan.fetch("budget"),
+        plan_sha256: plan_sha
+      )
       {
         "contract_version" => REQUEST_CONTRACT,
-        "plan_sha256" => Digest::SHA256.hexdigest(plan_bytes),
+        "plan_sha256" => plan_sha,
+        "budget" => budget,
         "pool_id" => pool.fetch("pool_id"),
         "requirements" => {
           "ollama_model" => requirements.fetch("ollama_model"),

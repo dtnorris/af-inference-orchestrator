@@ -135,6 +135,38 @@ class RpofClientTest < Minitest::Test
     end
   end
 
+  def test_budget_heartbeat_uses_injected_transport_without_guessing_cli_spelling
+    calls = []
+    client = CLIENT.new(
+      repo_root: @tmp,
+      executable: @fake,
+      budget_heartbeat: lambda do |budget_id:, plan_sha256:|
+        calls << { budget_id:, plan_sha256: }
+        "heartbeat-ok"
+      end
+    )
+
+    result = client.heartbeat_budget(
+      budget_id: "budget-fixture",
+      plan_sha256: "A" * 64
+    )
+
+    assert_equal "heartbeat-ok", result
+    assert_equal(
+      [{ budget_id: "budget-fixture", plan_sha256: "a" * 64 }],
+      calls
+    )
+
+    unconfigured = CLIENT.new(repo_root: @tmp, executable: @fake)
+    error = assert_raises(CLIENT::Error) do
+      unconfigured.heartbeat_budget(
+        budget_id: "budget-fixture",
+        plan_sha256: "a" * 64
+      )
+    end
+    assert_includes error.message, "heartbeat transport is not configured"
+  end
+
   def test_dispatch_can_stream_subprocess_output_and_still_read_summary
     File.write(@fake, <<~'SH')
       #!/bin/sh

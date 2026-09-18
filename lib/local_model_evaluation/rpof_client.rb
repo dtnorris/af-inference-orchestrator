@@ -12,9 +12,10 @@ module LocalModelEvaluation
     EXECUTION_POOL_RESULT_CONTRACT = "afio-rpof-execution-pool-fulfill-result/v0.1"
     DISPATCH_SUMMARY_CONTRACT = "afio-rpof-dispatch-summary/v0.1"
 
-    def initialize(repo_root:, executable: nil)
+    def initialize(repo_root:, executable: nil, budget_heartbeat: nil)
       @repo_root = File.expand_path(repo_root)
       @executable = File.expand_path(executable || File.join(@repo_root, "bin", "lme-rpof"))
+      @budget_heartbeat = budget_heartbeat
     end
 
     def capability_check(request)
@@ -82,6 +83,19 @@ module LocalModelEvaluation
       end
     rescue JSON::ParserError => e
       raise Error, "RPOF execution-pool result is invalid JSON: #{e.message}"
+    end
+
+    def heartbeat_budget(budget_id:, plan_sha256:)
+      id = budget_id.to_s
+      sha = plan_sha256.to_s
+      raise Error, "production budget heartbeat requires a non-empty budget_id" if id.strip.empty?
+      unless sha.match?(/\A[0-9a-f]{64}\z/i)
+        raise Error, "production budget heartbeat requires an exact 64-hex plan_sha256"
+      end
+      unless @budget_heartbeat
+        raise Error, "RPOF production budget heartbeat transport is not configured"
+      end
+      @budget_heartbeat.call(budget_id: id, plan_sha256: sha.downcase)
     end
 
     def dispatch(request:, workdir:, output_dir:, stream_output: false, dynamic_worker_admission: false)

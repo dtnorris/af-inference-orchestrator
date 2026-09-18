@@ -51,6 +51,7 @@ class ProductionPoolFulfillTest < Minitest::Test
     copy("lib/local_model_evaluation/rpof_client.rb")
     copy("lib/local_model_evaluation/production_pool_fulfillment.rb")
     copy("lib/local_model_evaluation/production_pool_qualification.rb")
+    copy("lib/production_burst_budget_contract.rb")
     write_model_config
     fake_rpof
     @plan_path = File.join(@tmp, "output", "plan.json")
@@ -68,8 +69,16 @@ class ProductionPoolFulfillTest < Minitest::Test
 
     call = client.calls.fetch(0)
     request = call.fetch(:request)
-    assert_equal "afio-rpof-execution-pool-fulfill-request/v0.1", request.fetch("contract_version")
+    assert_equal "afio-rpof-execution-pool-fulfill-request/v0.2", request.fetch("contract_version")
     assert_equal Digest::SHA256.hexdigest(plan_bytes), request.fetch("plan_sha256")
+    assert_equal "afio-production-burst-budget/v0.1", request.dig("budget", "contract_version")
+    assert_equal "budget-fixture", request.dig("budget", "budget_id")
+    assert_equal request.fetch("plan_sha256"), request.dig("budget", "plan_sha256")
+    assert_equal 5.0, request.dig("budget", "max_cumulative_compute_usd")
+    assert_equal 2700.0, request.dig("budget", "max_runtime_seconds")
+    assert_equal 5.0, request.dig("budget", "guardian_poll_seconds")
+    assert_equal 30.0, request.dig("budget", "orchestrator_heartbeat_timeout_seconds")
+    assert_equal 60.0, request.dig("budget", "teardown_reserve_seconds")
     assert_equal "qwen35", request.fetch("pool_id")
     assert_equal "qwen3.6:35b-a3b", request.dig("requirements", "ollama_model")
     assert_equal "qwen3.6:35b-a3b-q4_K_M", request.dig("requirements", "pull_model")
@@ -91,6 +100,8 @@ class ProductionPoolFulfillTest < Minitest::Test
     assert_equal "afio-production-execution-pool-handoff/v0.1", handoff.fetch("contract_version")
     assert_equal "output/plan.json", handoff.dig("plan", "path")
     assert_equal request.fetch("plan_sha256"), handoff.dig("plan", "sha256")
+    assert_equal "budget-fixture", handoff.dig("budget", "budget_id")
+    assert_equal request.fetch("plan_sha256"), handoff.dig("budget", "plan_sha256")
     assert_equal "planned", handoff.dig("result", "status")
     assert_equal "opaque-qwen35", handoff.dig("result", "execution_handle")
     assert_equal "fake stdout", fulfillment.stdout
@@ -283,6 +294,15 @@ class ProductionPoolFulfillTest < Minitest::Test
         "manifest_count" => 1
       },
       "capacity" => { "max_total_hourly_usd" => 6.0 },
+      "budget" => {
+        "contract_version" => "afio-production-burst-budget/v0.1",
+        "budget_id" => "budget-fixture",
+        "max_cumulative_compute_usd" => 5.0,
+        "max_runtime_seconds" => 2700.0,
+        "guardian_poll_seconds" => 5.0,
+        "orchestrator_heartbeat_timeout_seconds" => 30.0,
+        "teardown_reserve_seconds" => 60.0
+      },
       "pools" => [{
         "pool_id" => "qwen35",
         "model_ref" => "qwen",

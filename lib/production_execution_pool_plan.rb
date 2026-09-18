@@ -4,6 +4,7 @@ require "digest"
 require "json"
 require "pathname"
 require "yaml"
+require_relative "production_burst_budget_contract"
 
 class ProductionExecutionPoolPlan
   CONTRACT_VERSION = "afio-production-execution-pool-plan/v0.1"
@@ -19,8 +20,10 @@ class ProductionExecutionPoolPlan
     @policy_path = expand_config_path(policy_path || File.join("config", "production_execution_pools.yml"))
   end
 
-  def build(queue_path:, desired_workers: {}, minimum_workers: {}, max_pool_hourly_usd: {},
-            max_total_hourly_usd: nil, required_context_length: nil)
+  def build(queue_path:, budget_id:, desired_workers: {}, minimum_workers: {}, max_pool_hourly_usd: {},
+            max_total_hourly_usd: nil, required_context_length: nil,
+            max_cumulative_compute_usd: nil, max_runtime_seconds: nil, guardian_poll_seconds: nil,
+            orchestrator_heartbeat_timeout_seconds: nil, teardown_reserve_seconds: nil)
     policy = load_policy
     models = load_models
     overrides = normalize_overrides(
@@ -37,6 +40,26 @@ class ProductionExecutionPoolPlan
     total_cap = positive_float(
       max_total_hourly_usd || policy.fetch("max_total_hourly_usd"),
       "max total hourly cost"
+    )
+    budget_policy = policy.fetch("budget")
+    budget = ProductionBurstBudgetContract.build(
+      budget_id:,
+      max_cumulative_compute_usd: value_or_default(
+        max_cumulative_compute_usd, budget_policy.fetch("max_cumulative_compute_usd")
+      ),
+      max_runtime_seconds: value_or_default(
+        max_runtime_seconds, budget_policy.fetch("max_runtime_seconds")
+      ),
+      guardian_poll_seconds: value_or_default(
+        guardian_poll_seconds, budget_policy.fetch("guardian_poll_seconds")
+      ),
+      orchestrator_heartbeat_timeout_seconds: value_or_default(
+        orchestrator_heartbeat_timeout_seconds,
+        budget_policy.fetch("orchestrator_heartbeat_timeout_seconds")
+      ),
+      teardown_reserve_seconds: value_or_default(
+        teardown_reserve_seconds, budget_policy.fetch("teardown_reserve_seconds")
+      )
     )
 
     queue_dir = expand_queue(queue_path)
@@ -135,8 +158,11 @@ class ProductionExecutionPoolPlan
       "capacity" => {
         "max_total_hourly_usd" => total_cap
       },
+      "budget" => budget,
       "pools" => pools
     }
+  rescue ProductionBurstBudgetContract::Error => e
+    raise Error, e.message
   rescue KeyError => e
     raise Error, "execution-pool configuration is missing required key: #{e.message}"
   end
@@ -151,6 +177,21 @@ class ProductionExecutionPoolPlan
     end
     positive_integer(policy["required_context_length"], "required context length")
     positive_float(policy["max_total_hourly_usd"], "max total hourly cost")
+    budget_policy = policy["budget"]
+    raise Error, "execution-pool policy budget must be a mapping" unless budget_policy.is_a?(Hash)
+    budget_policy = budget_policy.transform_keys(&:to_s)
+    unless budget_policy["contract_version"].to_s == ProductionBurstBudgetContract::CONTRACT_VERSION
+      raise Error,
+            "execution-pool policy budget contract must be #{ProductionBurstBudgetContract::CONTRACT_VERSION.inspect}"
+    end
+    ProductionBurstBudgetContract.build(
+      budget_id: "policy-validation",
+      max_cumulative_compute_usd: budget_policy.fetch("max_cumulative_compute_usd"),
+      max_runtime_seconds: budget_policy.fetch("max_runtime_seconds"),
+      guardian_poll_seconds: budget_policy.fetch("guardian_poll_seconds"),
+      orchestrator_heartbeat_timeout_seconds: budget_policy.fetch("orchestrator_heartbeat_timeout_seconds"),
+      teardown_reserve_seconds: budget_policy.fetch("teardown_reserve_seconds")
+    )
     pools = policy["pools"]
     raise Error, "execution-pool policy pools must be a non-empty mapping" unless pools.is_a?(Hash) && !pools.empty?
 
@@ -177,7 +218,7 @@ class ProductionExecutionPoolPlan
       out[pool_id] = attrs.merge("model_ref" => model_ref)
     end
 
-    policy.merge("pools" => normalized)
+    policy.merge("budget" => budget_policy, "pools" => normalized)
   end
 
   def load_models
@@ -273,6 +314,10 @@ class ProductionExecutionPoolPlan
     data.transform_keys(&:to_s)
   rescue Psych::Exception => e
     raise Error, "invalid YAML in #{relative_path(path)}: #{e.message}"
+  end
+
+  def value_or_default(value, default)
+    value.nil? ? default : value
   end
 
   def positive_integer(value, label)

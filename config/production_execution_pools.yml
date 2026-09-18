@@ -5,6 +5,13 @@
 contract_version: afio-production-execution-pool-policy/v0.1
 required_context_length: 131072
 max_total_hourly_usd: 6.0
+budget:
+  contract_version: afio-production-burst-budget/v0.1
+  max_cumulative_compute_usd: 5.0
+  max_runtime_seconds: 2700
+  guardian_poll_seconds: 5
+  orchestrator_heartbeat_timeout_seconds: 30
+  teardown_reserve_seconds: 60
 pools:
   qwen35:
     model_ref: qwen

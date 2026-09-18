@@ -17,7 +17,13 @@ opts = {
   minimum_workers: {},
   max_pool_hourly_usd: {},
   max_total_hourly_usd: nil,
-  context: nil
+  context: nil,
+  budget_id: nil,
+  max_cumulative_compute_usd: nil,
+  max_runtime_seconds: nil,
+  guardian_poll_seconds: nil,
+  orchestrator_heartbeat_timeout_seconds: nil,
+  teardown_reserve_seconds: nil
 }
 
 parse_assignment = lambda do |value, label, numeric:|
@@ -51,6 +57,12 @@ parser = OptionParser.new do |o|
   o.on("--max-total-hourly-usd USD", Float, "Override aggregate execution-pool hourly ceiling") do |v|
     opts[:max_total_hourly_usd] = v
   end
+  o.on("--budget-id ID", "Opaque immutable production-burst budget id") { |v| opts[:budget_id] = v }
+  o.on("--max-cumulative-compute-usd USD", Float, "Override cumulative compute-dollar ceiling") { |v| opts[:max_cumulative_compute_usd] = v }
+  o.on("--max-runtime-seconds N", Float, "Override production-burst maximum runtime") { |v| opts[:max_runtime_seconds] = v }
+  o.on("--guardian-poll-seconds N", Float, "Override guardian polling cadence") { |v| opts[:guardian_poll_seconds] = v }
+  o.on("--orchestrator-heartbeat-timeout-seconds N", Float, "Override AFIO heartbeat timeout") { |v| opts[:orchestrator_heartbeat_timeout_seconds] = v }
+  o.on("--teardown-reserve-seconds N", Float, "Override teardown reserve duration") { |v| opts[:teardown_reserve_seconds] = v }
   o.on("--context N", Integer, "Override required Ollama context length") { |v| opts[:context] = v }
 end
 
@@ -59,6 +71,7 @@ begin
   queue = ARGV.shift
   raise OptionParser::MissingArgument, "QUEUE" unless queue
   raise OptionParser::MissingArgument, "--output" unless opts[:output]
+  raise OptionParser::MissingArgument, "--budget-id" if opts[:budget_id].to_s.strip.empty?
   raise OptionParser::InvalidArgument, "unexpected arguments: #{ARGV.join(' ')}" unless ARGV.empty?
 rescue OptionParser::ParseError => e
   warn "ERROR: #{e.message}"
@@ -74,11 +87,17 @@ begin
   )
   plan = planner.build(
     queue_path: queue,
+    budget_id: opts.fetch(:budget_id),
     desired_workers: opts[:desired_workers],
     minimum_workers: opts[:minimum_workers],
     max_pool_hourly_usd: opts[:max_pool_hourly_usd],
     max_total_hourly_usd: opts[:max_total_hourly_usd],
-    required_context_length: opts[:context]
+    required_context_length: opts[:context],
+    max_cumulative_compute_usd: opts[:max_cumulative_compute_usd],
+    max_runtime_seconds: opts[:max_runtime_seconds],
+    guardian_poll_seconds: opts[:guardian_poll_seconds],
+    orchestrator_heartbeat_timeout_seconds: opts[:orchestrator_heartbeat_timeout_seconds],
+    teardown_reserve_seconds: opts[:teardown_reserve_seconds]
   )
 
   output_path = File.expand_path(opts.fetch(:output), ROOT)
@@ -106,6 +125,9 @@ begin
   puts "  Queue: #{plan.dig('queue', 'path')}"
   puts "  Frozen manifests: #{plan.dig('queue', 'manifest_count')}"
   puts format("  Aggregate hourly ceiling: $%.4f/hr", plan.dig("capacity", "max_total_hourly_usd"))
+  puts "  Budget ID: #{plan.dig('budget', 'budget_id')}"
+  puts format("  Cumulative compute ceiling: $%.4f", plan.dig("budget", "max_cumulative_compute_usd"))
+  puts format("  Maximum runtime: %.1fs", plan.dig("budget", "max_runtime_seconds"))
   plan.fetch("pools").each do |pool|
     capacity = pool.fetch("capacity")
     puts format(

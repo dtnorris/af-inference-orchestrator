@@ -7,6 +7,7 @@ require "time"
 require_relative "production_worker_expansion_policy"
 require_relative "local_model_evaluation/production_pool_fulfillment"
 require_relative "local_model_evaluation/rpof_client"
+require_relative "production_burst_budget_contract"
 
 class ProductionWorkerExpansionController
   EVIDENCE_FILE = "worker-expansion.jsonl"
@@ -50,6 +51,11 @@ class ProductionWorkerExpansionController
     plan_path = within_root(plan_path)
     plan_bytes = File.binread(plan_path)
     plan = JSON.parse(plan_bytes)
+    plan_sha = ProductionBurstBudgetContract.plan_sha256(plan_bytes)
+    @budget_identity = ProductionBurstBudgetContract.identity_for(
+      budget: plan.fetch("budget"),
+      plan_sha256: plan_sha
+    )
     pool = Array(plan.fetch("pools")).find { |row| row.fetch("pool_id").to_s == pool_id.to_s }
     raise Error, "execution pool #{pool_id.inspect} is not present in expansion plan" unless pool
 
@@ -64,7 +70,7 @@ class ProductionWorkerExpansionController
     initial_seconds = positive_float(initial_fulfillment_seconds, "initial fulfillment seconds")
     return result("dispatch_finished", active) unless wait_for_dispatch_open(output, execution_handle, dispatch_alive)
 
-    bootstrap_samples = recovered_bootstrap_samples(output)
+    bootstrap_samples = recovered_bootstrap_samples(output, budget_identity: @budget_identity)
     if bootstrap_samples.empty?
       bootstrap_samples << initial_seconds
       append_event(
@@ -257,7 +263,8 @@ class ProductionWorkerExpansionController
       end
     end
   rescue JSON::ParserError, KeyError, ArgumentError, TypeError, RuntimeError, SystemCallError,
-         LocalModelEvaluation::RpofClient::Error, ProductionWorkerExpansionPolicy::Error => e
+         LocalModelEvaluation::RpofClient::Error, ProductionWorkerExpansionPolicy::Error,
+         ProductionBurstBudgetContract::Error => e
     raise Error, e.message
   end
 
@@ -314,13 +321,17 @@ class ProductionWorkerExpansionController
     raise Error, "could not recover dispatch worker prefix: #{e.message}"
   end
 
-  def recovered_bootstrap_samples(output_dir)
+  def recovered_bootstrap_samples(output_dir, budget_identity:)
     path = File.join(output_dir, EVIDENCE_FILE)
     return [] unless File.file?(path)
 
     samples = []
     File.readlines(path, chomp: true).reject(&:empty?).each_with_index do |line, offset|
       event = JSON.parse(line)
+      unless event["budget"] == budget_identity
+        raise Error,
+              "worker expansion evidence line #{offset + 1} budget identity does not match frozen parent budget"
+      end
       value = case event["event"].to_s
               when "controller_start" then event["starter_fulfillment_seconds"]
               when "admitted" then event["preparation_elapsed_seconds"]
@@ -393,6 +404,7 @@ class ProductionWorkerExpansionController
       "schema_version" => 1,
       "at_utc" => utc_now.iso8601,
       "pool_id" => pool_id.to_s,
+      "budget" => @budget_identity,
       "event" => event,
       "reason" => reason,
       "active_worker_indices" => active

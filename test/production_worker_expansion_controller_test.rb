@@ -5,6 +5,7 @@ require "tmpdir"
 require "fileutils"
 require "json"
 require "stringio"
+require "digest"
 require_relative "../lib/production_worker_expansion_controller"
 
 class ProductionWorkerExpansionControllerTest < Minitest::Test
@@ -89,11 +90,15 @@ class ProductionWorkerExpansionControllerTest < Minitest::Test
     assert_equal "cost_per_hour_saved_exceeds_limit", result.fetch("reason")
     assert_equal [1, 2], result.fetch("worker_indices")
     assert_equal [2], @client.fulfill_requests.map { |request| request.dig("capacity", "desired_workers") }
+    request_budget = @client.fulfill_requests.fetch(0).fetch("budget")
+    assert_equal "budget-fixture", request_budget.fetch("budget_id")
+    assert_equal Digest::SHA256.file(@plan_path).hexdigest, request_budget.fetch("plan_sha256")
     assert_equal [["ep-qwen35", @output, 2]], @client.admissions
     assert_equal 1, @client.closes.length
     assert_empty @client.scales
 
     events = expansion_events
+    assert events.all? { |event| event.fetch("budget") == budget_identity }
     first_decision = events.find { |event| event["event"] == "decision" }
     assert_equal 18, first_decision.dig("observation", "unclaimed_jobs")
     assert_in_delta 100.0, first_decision.dig("observation", "observed_seconds_per_job"), 0.001
@@ -188,9 +193,9 @@ class ProductionWorkerExpansionControllerTest < Minitest::Test
     File.write(
       File.join(@output, ProductionWorkerExpansionController::EVIDENCE_FILE),
       [
-        JSON.generate("event" => "controller_start", "starter_fulfillment_seconds" => 100),
-        JSON.generate("event" => "admitted", "target_worker" => 2, "preparation_elapsed_seconds" => 120),
-        JSON.generate("event" => "admitted", "target_worker" => 3, "preparation_elapsed_seconds" => 130)
+        JSON.generate("event" => "controller_start", "budget" => budget_identity, "starter_fulfillment_seconds" => 100),
+        JSON.generate("event" => "admitted", "budget" => budget_identity, "target_worker" => 2, "preparation_elapsed_seconds" => 120),
+        JSON.generate("event" => "admitted", "budget" => budget_identity, "target_worker" => 3, "preparation_elapsed_seconds" => 130)
       ].join("\n") + "\n"
     )
     write_job(1, "completed", 100)
@@ -214,6 +219,33 @@ class ProductionWorkerExpansionControllerTest < Minitest::Test
     resume = expansion_events.find { |event| event["event"] == "controller_resume" }
     assert_equal [1, 2, 3], resume.fetch("active_worker_indices")
     assert_equal 3, resume.fetch("recovered_bootstrap_samples")
+  end
+
+  def test_resume_rejects_worker_expansion_evidence_from_different_budget
+    write_job(1, "completed", 100)
+    write_job(2, "completed", 100)
+    File.write(
+      File.join(@output, ProductionWorkerExpansionController::EVIDENCE_FILE),
+      JSON.generate(
+        "event" => "controller_start",
+        "budget" => { "budget_id" => "other-budget", "plan_sha256" => "f" * 64 },
+        "starter_fulfillment_seconds" => 100
+      ) + "\n"
+    )
+
+    error = assert_raises(ProductionWorkerExpansionController::Error) do
+      build_controller.run(
+        plan_path: @plan_path,
+        pool_id: "qwen35",
+        execution_handle: "ep-qwen35",
+        output_dir: @output,
+        initial_worker_indices: [1],
+        initial_fulfillment_seconds: 100,
+        dispatch_alive: -> { true }
+      )
+    end
+    assert_includes error.message, "budget identity does not match frozen parent budget"
+    assert_empty @client.fulfill_requests
   end
 
   private
@@ -243,6 +275,14 @@ class ProductionWorkerExpansionControllerTest < Minitest::Test
     File.write(File.join(dir, "metadata.json"), JSON.generate(document))
   end
 
+  def budget_identity
+    document = JSON.parse(File.read(@plan_path))
+    {
+      "budget_id" => document.dig("budget", "budget_id"),
+      "plan_sha256" => Digest::SHA256.file(@plan_path).hexdigest
+    }
+  end
+
   def expansion_events
     File.readlines(File.join(@output, ProductionWorkerExpansionController::EVIDENCE_FILE), chomp: true)
         .map { |line| JSON.parse(line) }
@@ -252,6 +292,15 @@ class ProductionWorkerExpansionControllerTest < Minitest::Test
     {
       "contract_version" => "afio-production-execution-pool-plan/v0.1",
       "capacity" => { "max_total_hourly_usd" => 6.0 },
+      "budget" => {
+        "contract_version" => "afio-production-burst-budget/v0.1",
+        "budget_id" => "budget-fixture",
+        "max_cumulative_compute_usd" => 5.0,
+        "max_runtime_seconds" => 2700.0,
+        "guardian_poll_seconds" => 5.0,
+        "orchestrator_heartbeat_timeout_seconds" => 30.0,
+        "teardown_reserve_seconds" => 60.0
+      },
       "pools" => [{
         "pool_id" => "qwen35",
         "requirements" => {

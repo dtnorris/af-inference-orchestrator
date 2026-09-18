@@ -36,8 +36,8 @@ class ProductionExecutionPoolPlanTest < Minitest::Test
     queue = queue_for(manifests.map { |path| relative(path) })
     planner = ProductionExecutionPoolPlan.new(root: @root)
 
-    first = planner.build(queue_path: queue)
-    second = planner.build(queue_path: queue)
+    first = planner.build(queue_path: queue, budget_id: "budget-fixture")
+    second = planner.build(queue_path: queue, budget_id: "budget-fixture")
 
     assert_equal first, second
     assert_equal "afio-production-execution-pool-plan/v0.1", first.fetch("contract_version")
@@ -45,6 +45,18 @@ class ProductionExecutionPoolPlanTest < Minitest::Test
     assert_match(/\A[0-9a-f]{64}\z/, first.dig("queue", "run_order_sha256"))
     assert_match(/\A[0-9a-f]{64}\z/, first.dig("queue", "snapshot_sha256"))
     assert_equal 6.0, first.dig("capacity", "max_total_hourly_usd")
+    assert_equal(
+      {
+        "contract_version" => "afio-production-burst-budget/v0.1",
+        "budget_id" => "budget-fixture",
+        "max_cumulative_compute_usd" => 5.0,
+        "max_runtime_seconds" => 2700.0,
+        "guardian_poll_seconds" => 5.0,
+        "orchestrator_heartbeat_timeout_seconds" => 30.0,
+        "teardown_reserve_seconds" => 60.0
+      },
+      first.fetch("budget")
+    )
     assert_equal %w[gemma4 gpt-oss qwen27 qwen35], first.fetch("pools").map { |pool| pool.fetch("pool_id") }
     assert_equal(
       { "gemma4" => "gemma", "gpt-oss" => "gptoss", "qwen27" => "qwen27", "qwen35" => "qwen" },
@@ -76,11 +88,17 @@ class ProductionExecutionPoolPlanTest < Minitest::Test
     queue = queue_for([relative(manifest("experiments/qwen.yml", model: "qwen"))])
     plan = ProductionExecutionPoolPlan.new(root: @root).build(
       queue_path: queue,
+      budget_id: "budget-override",
       desired_workers: { "qwen35" => 8 },
       minimum_workers: { "qwen35" => 3 },
       max_pool_hourly_usd: { "qwen35" => 5.25 },
       max_total_hourly_usd: 7.5,
-      required_context_length: 262_144
+      required_context_length: 262_144,
+      max_cumulative_compute_usd: 2.5,
+      max_runtime_seconds: 1200,
+      guardian_poll_seconds: 4,
+      orchestrator_heartbeat_timeout_seconds: 12,
+      teardown_reserve_seconds: 45
     )
 
     qwen = plan.fetch("pools").fetch(0)
@@ -90,16 +108,57 @@ class ProductionExecutionPoolPlanTest < Minitest::Test
     assert_equal 3, qwen.dig("capacity", "minimum_workers")
     assert_equal 5.25, qwen.dig("capacity", "max_pool_hourly_usd")
     assert_equal 7.5, plan.dig("capacity", "max_total_hourly_usd")
+    assert_equal "budget-override", plan.dig("budget", "budget_id")
+    assert_equal 2.5, plan.dig("budget", "max_cumulative_compute_usd")
+    assert_equal 1200.0, plan.dig("budget", "max_runtime_seconds")
+    assert_equal 4.0, plan.dig("budget", "guardian_poll_seconds")
+    assert_equal 12.0, plan.dig("budget", "orchestrator_heartbeat_timeout_seconds")
+    assert_equal 45.0, plan.dig("budget", "teardown_reserve_seconds")
     assert_equal 262_144, qwen.dig("requirements", "required_context_length")
     assert_equal "qwen3.6:35b-a3b", qwen.dig("requirements", "ollama_model")
     assert_equal QWEN_DIGEST, qwen.dig("requirements", "expected_digest")
+  end
+
+  def test_rejects_invalid_budget_limits_and_heartbeat_relationship
+    queue = queue_for([relative(manifest("experiments/qwen.yml", model: "qwen"))])
+    planner = ProductionExecutionPoolPlan.new(root: @root)
+    fields = %i[
+      max_cumulative_compute_usd
+      max_runtime_seconds
+      guardian_poll_seconds
+      orchestrator_heartbeat_timeout_seconds
+      teardown_reserve_seconds
+    ]
+
+    fields.each do |field|
+      [0, Float::INFINITY, Float::NAN].each do |value|
+        error = assert_raises(ProductionExecutionPoolPlan::Error) do
+          planner.build(
+            queue_path: queue,
+            budget_id: "budget-invalid",
+            **{ field => value }
+          )
+        end
+        assert_includes error.message, "strictly positive finite number"
+      end
+    end
+
+    error = assert_raises(ProductionExecutionPoolPlan::Error) do
+      planner.build(
+        queue_path: queue,
+        budget_id: "budget-invalid-heartbeat",
+        guardian_poll_seconds: 5,
+        orchestrator_heartbeat_timeout_seconds: 9
+      )
+    end
+    assert_includes error.message, "at least 2 * budget.guardian_poll_seconds"
   end
 
   def test_fails_closed_for_multi_model_manifest
     queue = queue_for([relative(manifest("experiments/multi.yml", models: %w[qwen qwen27]))])
 
     error = assert_raises(ProductionExecutionPoolPlan::Error) do
-      ProductionExecutionPoolPlan.new(root: @root).build(queue_path: queue)
+      ProductionExecutionPoolPlan.new(root: @root).build(queue_path: queue, budget_id: "budget-fixture")
     end
 
     assert_includes error.message, "exactly one frozen manifest model"
@@ -108,7 +167,7 @@ class ProductionExecutionPoolPlanTest < Minitest::Test
   def test_fails_closed_for_unmapped_or_unqualified_model
     queue = queue_for([relative(manifest("experiments/granite.yml", model: "granite"))])
     error = assert_raises(ProductionExecutionPoolPlan::Error) do
-      ProductionExecutionPoolPlan.new(root: @root).build(queue_path: queue)
+      ProductionExecutionPoolPlan.new(root: @root).build(queue_path: queue, budget_id: "budget-fixture")
     end
     assert_includes error.message, "no execution pool maps frozen model"
 
@@ -122,7 +181,7 @@ class ProductionExecutionPoolPlanTest < Minitest::Test
     File.write(File.join(@root, "config", "production_execution_pools.yml"), YAML.dump(policy))
 
     error = assert_raises(ProductionExecutionPoolPlan::Error) do
-      ProductionExecutionPoolPlan.new(root: @root).build(queue_path: queue)
+      ProductionExecutionPoolPlan.new(root: @root).build(queue_path: queue, budget_id: "budget-fixture")
     end
     assert_includes error.message, "no pull_model"
   end
@@ -140,7 +199,7 @@ class ProductionExecutionPoolPlanTest < Minitest::Test
     queue = queue_for([relative(manifest("experiments/qwen.yml", model: "qwen"))])
 
     error = assert_raises(ProductionExecutionPoolPlan::Error) do
-      ProductionExecutionPoolPlan.new(root: @root).build(queue_path: queue)
+      ProductionExecutionPoolPlan.new(root: @root).build(queue_path: queue, budget_id: "budget-fixture")
     end
 
     assert_includes error.message, "mapped by multiple execution pools"
@@ -183,6 +242,7 @@ class ProductionExecutionPoolPlanCliTest < Minitest::Test
     @root = Dir.mktmpdir("production-execution-pools-cli-")
     copy("bin/lme-production-pool-plan")
     copy("lib/production_execution_pool_plan.rb")
+    copy("lib/production_burst_budget_contract.rb")
     copy("config/models.yml")
     copy("config/production_execution_pools.yml")
   end
@@ -206,6 +266,7 @@ class ProductionExecutionPoolPlanCliTest < Minitest::Test
       File.join(@root, "bin", "lme-production-pool-plan"),
       queue,
       "--output", "output/fixture/execution-pools.json",
+      "--budget-id", "budget-cli-fixture",
       "--workers", "qwen35=6",
       "--minimum-workers", "qwen35=2",
       "--max-pool-hourly-usd", "qwen35=4.25",
@@ -227,10 +288,18 @@ class ProductionExecutionPoolPlanCliTest < Minitest::Test
     assert_equal 2, pool.dig("capacity", "minimum_workers")
     assert_equal 4.25, pool.dig("capacity", "max_pool_hourly_usd")
     assert_equal 5.5, plan.dig("capacity", "max_total_hourly_usd")
+    assert_equal "budget-cli-fixture", plan.dig("budget", "budget_id")
+    assert_equal 5.0, plan.dig("budget", "max_cumulative_compute_usd")
     assert_equal 262_144, pool.dig("requirements", "required_context_length")
 
     out, err, status = Open3.capture3({ "LME_REPO" => @root }, *command)
     assert status.success?, out + err
+    assert_equal first, File.binread(output_path)
+
+    changed = command + ["--max-cumulative-compute-usd", "4.5"]
+    out, err, status = Open3.capture3({ "LME_REPO" => @root }, *changed)
+    refute status.success?, out + err
+    assert_includes err, "existing execution-pool plan differs"
     assert_equal first, File.binread(output_path)
   end
 
@@ -251,7 +320,8 @@ class ProductionExecutionPoolPlanCliTest < Minitest::Test
       RbConfig.ruby,
       File.join(@root, "bin", "lme-production-pool-plan"),
       queue,
-      "--output", "output/fixture/execution-pools.json"
+      "--output", "output/fixture/execution-pools.json",
+      "--budget-id", "budget-cli-fixture"
     )
 
     refute status.success?, out + err
