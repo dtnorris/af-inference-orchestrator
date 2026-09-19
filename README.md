@@ -6,6 +6,19 @@ The repository is now named `af-inference-orchestrator` (AFIO). The public
 `bin/lme` command, `LocalModelEvaluation` Ruby namespace, and `LME_*`
 environment variables remain intentional compatibility names.
 
+## Current status
+
+AFIO is the production inference/orchestration layer, not an initial evaluation
+prototype. The frozen production-backlog series through Batch 035 contributed
+to the AMC 6.0 milestone: whole-Adventure-Catalog coverage of the established
+13-column production-scoring baseline.
+
+Those backlog manifests and their retained evidence are historical provenance.
+Their presence in this repository does not by itself mean an old AMC or backlog
+is still an active production dependency. New AFIO work should normally be
+incremental/new-adventure scoring, targeted rescoring or qualification, or
+deliberately selected additional dimensions.
+
 ## Scope
 
 This repository answers **what to test, where to run it, how to dispatch it, and what the experiment established**. Its primary role is to act as a lightweight control plane from the Mac: keep AdventureFinder scoring semantics and source access local, while sending model inference to one or more reachable Ollama workers.
@@ -43,7 +56,11 @@ autoscaling, or remote scorer-repository synchronization.
 
 In particular, v0.2 does **not** copy `af-cli-scoring-utility` to remote machines or execute the whole scorer remotely. The Mac remains the lightweight control plane and the expensive model inference happens on the worker. Whole-job remote execution should only be added if this simpler architecture proves insufficient.
 
-The concrete first pilot remains `experiments/granite-platform-equivalence-v1.yml`. See `docs/SCORER_INTEGRATION_GATE.md` before starting paid compute. After platform equivalence is established, `experiments/templates/remote-parallel.yml` is the starting point for remote throughput runs.
+The historical first platform-equivalence pilot,
+`experiments/granite-platform-equivalence-v1.yml`, remains for reproducibility;
+it is not the current production workload. For new remote throughput work,
+`experiments/templates/remote-parallel.yml` remains the starting template.
+See `docs/SCORER_INTEGRATION_GATE.md` before starting paid compute.
 
 ## Requirements
 
