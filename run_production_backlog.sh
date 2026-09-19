@@ -3,6 +3,7 @@ set -u
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO="${LME_REPO:-$SCRIPT_DIR}"
+export LME_REPO="$REPO"
 QUEUE_ARG="${1:-}"
 CONTROL_DIR="$REPO/output/production-backlog-control"
 PAUSE_FILE="$CONTROL_DIR/pause"

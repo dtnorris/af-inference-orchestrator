@@ -6,7 +6,8 @@ require "production_backlog_dispatch"
 
 manifest = ARGV.shift or abort "Usage: production-backlog-dispatch MANIFEST [RUNTIME_MAX_TOKENS]"
 runtime_max_tokens = ARGV.shift
-repo_root = ENV.fetch("LME_REPO", File.expand_path("..", __dir__))
+repo_root = File.expand_path(ENV.fetch("LME_REPO", File.expand_path("..", __dir__)))
+ENV["LME_REPO"] = repo_root
 
 adapter = ProductionBacklogDispatch::SystemCommandAdapter.new(repo_root:)
 guard = ProductionBacklogDispatch::LocalQualifiedArtifactGuard.new(repo_root:)
