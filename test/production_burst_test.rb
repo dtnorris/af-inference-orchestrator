@@ -345,9 +345,18 @@ class ProductionBurstTest < Minitest::Test
     SH
     fake_fulfill_child
     fake_campaign_child
+    plan_path = File.join(@tmp, "output", "plan.json")
+    plan = JSON.parse(File.read(plan_path))
+    campaign_dir = File.join(@tmp, "output", "burst", "pools", "qwen35", "campaign")
+    FileUtils.mkdir_p(campaign_dir)
+    fixture_env = {
+      "LME_REPO" => @tmp,
+      "AFIO_TEST_PLAN_SHA256" => Digest::SHA256.file(plan_path).hexdigest,
+      "AFIO_TEST_BUDGET_ID" => plan.dig("budget", "budget_id")
+    }
 
     out, err, status = Open3.capture3(
-      { "LME_REPO" => @tmp },
+      fixture_env,
       RbConfig.ruby,
       File.join(@tmp, "bin", "lme-production-burst"),
       "output/plan.json",
@@ -459,29 +468,26 @@ class ProductionBurstTest < Minitest::Test
       plan_path="$root/$plan_arg"
       output="$root/$output_arg"
       printf '%s\n' "$pool" >> "$root/fulfill-calls.txt"
-      plan_sha=$(shasum -a 256 "$plan_path")
-      plan_sha=${plan_sha%% *}
-      budget_id=$(sed -n 's/^[[:space:]]*"budget_id": "\([^"]*\)".*/\1/p' "$plan_path" | head -n 1)
-      mkdir -p "${output%/*}"
-      cat > "$output" <<EOF
-      {
-        "contract_version": "afio-production-execution-pool-handoff/v0.1",
-        "plan": { "path": "$plan_path", "sha256": "$plan_sha" },
-        "budget": { "budget_id": "$budget_id", "plan_sha256": "$plan_sha" },
-        "pool_id": "$pool",
-        "request": {},
-        "result": {
-          "contract_version": "afio-rpof-execution-pool-fulfill-result/v0.1",
-          "ready": true,
-          "status": "ready",
-          "plan_sha256": "$plan_sha",
-          "pool_id": "$pool",
-          "execution_handle": "ep-$pool",
-          "worker_indices": [1],
-          "detail": "ready"
-        }
-      }
-      EOF
+      plan_sha=${AFIO_TEST_PLAN_SHA256:?}
+      budget_id=${AFIO_TEST_BUDGET_ID:?}
+      printf '%s\n' \
+        '{' \
+        '  "contract_version": "afio-production-execution-pool-handoff/v0.1",' \
+        "  \"plan\": { \"path\": \"$plan_path\", \"sha256\": \"$plan_sha\" }," \
+        "  \"budget\": { \"budget_id\": \"$budget_id\", \"plan_sha256\": \"$plan_sha\" }," \
+        "  \"pool_id\": \"$pool\"," \
+        '  "request": {},' \
+        '  "result": {' \
+        '    "contract_version": "afio-rpof-execution-pool-fulfill-result/v0.1",' \
+        '    "ready": true,' \
+        '    "status": "ready",' \
+        "    \"plan_sha256\": \"$plan_sha\"," \
+        "    \"pool_id\": \"$pool\"," \
+        "    \"execution_handle\": \"ep-$pool\"," \
+        '    "worker_indices": [1],' \
+        '    "detail": "ready"' \
+        '  }' \
+        '}' > "$output"
     SH
   end
 
@@ -502,7 +508,6 @@ class ProductionBurstTest < Minitest::Test
       done
       pool=${fleet#ep-}
       printf '%s\n' "$pool" >> "$root/campaign-launches.txt"
-      mkdir -p "$output"
       printf '%s\n' '{"contract_version":"afio-rpof-dispatch-summary/v0.1","status":"completed"}' > "$output/summary.json"
     SH
   end
