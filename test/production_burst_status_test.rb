@@ -7,6 +7,7 @@ require "json"
 require "open3"
 require "rbconfig"
 require "digest"
+require_relative "../lib/production_burst_status"
 
 class ProductionBurstStatusTest < Minitest::Test
   ROOT = File.expand_path("..", __dir__)
@@ -54,15 +55,10 @@ class ProductionBurstStatusTest < Minitest::Test
     ledger.fetch("plan")["sha256"] = "b" * 64
     File.write(@ledger_path, JSON.pretty_generate(ledger) + "\n")
 
-    out, err, status = Open3.capture3(
-      { "LME_REPO" => @tmp },
-      RbConfig.ruby,
-      File.join(ROOT, "bin", "lme-production-burst-status"),
-      "output/burst/production-burst.json"
-    )
-
-    refute status.success?, out
-    assert_includes err, "execution-pool plan SHA mismatch"
+    error = assert_raises(RuntimeError) do
+      ProductionBurstStatus.new(root: @tmp).render("output/burst/production-burst.json")
+    end
+    assert_includes error.message, "execution-pool plan SHA mismatch"
   end
 
   private

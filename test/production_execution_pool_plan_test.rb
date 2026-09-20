@@ -6,6 +6,7 @@ require "open3"
 require "rbconfig"
 require "yaml"
 require_relative "../lib/production_execution_pool_plan"
+require_relative "../lib/production_execution_pool_plan_writer"
 
 class ProductionExecutionPoolPlanTest < Minitest::Test
   ROOT = File.expand_path("..", __dir__)
@@ -242,6 +243,7 @@ class ProductionExecutionPoolPlanCliTest < Minitest::Test
     @root = Dir.mktmpdir("production-execution-pools-cli-")
     copy("bin/lme-production-pool-plan")
     copy("lib/production_execution_pool_plan.rb")
+    copy("lib/production_execution_pool_plan_writer.rb")
     copy("lib/production_burst_budget_contract.rb")
     copy("config/models.yml")
     copy("config/production_execution_pools.yml")
@@ -292,18 +294,26 @@ class ProductionExecutionPoolPlanCliTest < Minitest::Test
     assert_equal 5.0, plan.dig("budget", "max_cumulative_compute_usd")
     assert_equal 262_144, pool.dig("requirements", "required_context_length")
 
-    out, err, status = Open3.capture3({ "LME_REPO" => @root }, *command)
-    assert status.success?, out + err
+    writer = ProductionExecutionPoolPlanWriter.new(root: @root)
+    assert_equal output_path, writer.write(
+      plan:,
+      output: "output/fixture/execution-pools.json"
+    )
     assert_equal first, File.binread(output_path)
 
-    changed = command + ["--max-cumulative-compute-usd", "4.5"]
-    out, err, status = Open3.capture3({ "LME_REPO" => @root }, *changed)
-    refute status.success?, out + err
-    assert_includes err, "existing execution-pool plan differs"
+    changed_plan = JSON.parse(first)
+    changed_plan.fetch("budget")["max_cumulative_compute_usd"] = 4.5
+    error = assert_raises(ProductionExecutionPoolPlan::Error) do
+      writer.write(
+        plan: changed_plan,
+        output: "output/fixture/execution-pools.json"
+      )
+    end
+    assert_includes error.message, "existing execution-pool plan differs"
     assert_equal first, File.binread(output_path)
   end
 
-  def test_cli_refuses_to_overwrite_a_different_existing_plan
+  def test_writer_refuses_to_overwrite_a_different_existing_plan
     manifest_path = File.join(@root, "experiments", "qwen.yml")
     FileUtils.mkdir_p(File.dirname(manifest_path))
     File.write(manifest_path, YAML.dump("models" => ["qwen"], "workers" => ["mac"]))
@@ -315,17 +325,18 @@ class ProductionExecutionPoolPlanCliTest < Minitest::Test
     FileUtils.mkdir_p(File.dirname(output_path))
     File.write(output_path, "{}\n")
 
-    out, err, status = Open3.capture3(
-      { "LME_REPO" => @root },
-      RbConfig.ruby,
-      File.join(@root, "bin", "lme-production-pool-plan"),
-      queue,
-      "--output", "output/fixture/execution-pools.json",
-      "--budget-id", "budget-cli-fixture"
+    plan = ProductionExecutionPoolPlan.new(root: @root).build(
+      queue_path: queue,
+      budget_id: "budget-cli-fixture"
     )
 
-    refute status.success?, out + err
-    assert_includes err, "existing execution-pool plan differs"
+    error = assert_raises(ProductionExecutionPoolPlan::Error) do
+      ProductionExecutionPoolPlanWriter.new(root: @root).write(
+        plan:,
+        output: "output/fixture/execution-pools.json"
+      )
+    end
+    assert_includes error.message, "existing execution-pool plan differs"
     assert_equal "{}\n", File.read(output_path)
   end
 

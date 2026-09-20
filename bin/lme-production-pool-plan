@@ -8,6 +8,7 @@ require "optparse"
 ROOT = File.expand_path(ENV.fetch("LME_REPO", File.expand_path("..", __dir__)))
 $LOAD_PATH.unshift File.join(ROOT, "lib")
 require "production_execution_pool_plan"
+require "production_execution_pool_plan_writer"
 
 opts = {
   policy: File.join("config", "production_execution_pools.yml"),
@@ -100,26 +101,10 @@ begin
     teardown_reserve_seconds: opts[:teardown_reserve_seconds]
   )
 
-  output_path = File.expand_path(opts.fetch(:output), ROOT)
-  root_prefix = ROOT.end_with?(File::SEPARATOR) ? ROOT : "#{ROOT}#{File::SEPARATOR}"
-  unless output_path == ROOT || output_path.start_with?(root_prefix)
-    raise ProductionExecutionPoolPlan::Error, "output path escapes repository root: #{output_path}"
-  end
-  FileUtils.mkdir_p(File.dirname(output_path))
-  content = JSON.pretty_generate(plan) + "\n"
-  if File.file?(output_path) && File.read(output_path) != content
-    raise ProductionExecutionPoolPlan::Error,
-          "existing execution-pool plan differs: #{output_path}; use a new --output path or remove it"
-  end
-  unless File.file?(output_path)
-    tmp = "#{output_path}.tmp.#{$$}"
-    begin
-      File.write(tmp, content)
-      File.rename(tmp, output_path)
-    ensure
-      File.delete(tmp) if File.exist?(tmp)
-    end
-  end
+  output_path = ProductionExecutionPoolPlanWriter.new(root: ROOT).write(
+    plan:,
+    output: opts.fetch(:output)
+  )
 
   puts "AFIO production execution-pool plan"
   puts "  Queue: #{plan.dig('queue', 'path')}"

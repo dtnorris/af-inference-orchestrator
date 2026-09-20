@@ -11,6 +11,7 @@ $LOAD_PATH.unshift File.join(ROOT, "lib")
 require "local_model_evaluation/rpof_client"
 require "local_model_evaluation/production_pool_qualification"
 require "local_model_evaluation/production_pool_fulfillment"
+require "local_model_evaluation/production_pool_fulfill_options"
 
 PLAN_CONTRACT = "afio-production-execution-pool-plan/v0.1"
 
@@ -33,13 +34,7 @@ end
 
 begin
   parser.parse!(ARGV)
-  plan_arg = ARGV.shift
-  raise OptionParser::MissingArgument, "PLAN.json" unless plan_arg
-  raise OptionParser::MissingArgument, "--pool" unless opts[:pool]
-  raise OptionParser::MissingArgument, "--output" unless opts[:output]
-  raise OptionParser::InvalidArgument, "--dry-run and --yes are mutually exclusive" if opts[:dry_run] && opts[:yes]
-  raise OptionParser::InvalidArgument, "use --dry-run or --yes" unless opts[:dry_run] || opts[:yes]
-  raise OptionParser::InvalidArgument, "unexpected arguments: #{ARGV.join(' ')}" unless ARGV.empty?
+  plan_arg = LocalModelEvaluation::ProductionPoolFulfillOptions.validate!(opts, ARGV)
 rescue OptionParser::ParseError => e
   warn "ERROR: #{e.message}"
   warn parser

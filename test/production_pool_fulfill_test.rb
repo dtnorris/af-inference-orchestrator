@@ -10,6 +10,7 @@ require "digest"
 require "yaml"
 require_relative "../lib/local_model_evaluation/production_pool_fulfillment"
 require_relative "../lib/local_model_evaluation/production_pool_qualification"
+require_relative "../lib/local_model_evaluation/production_pool_fulfill_options"
 
 class ProductionPoolFulfillTest < Minitest::Test
   ROOT = File.expand_path("..", __dir__)
@@ -51,6 +52,7 @@ class ProductionPoolFulfillTest < Minitest::Test
     copy("lib/local_model_evaluation/rpof_client.rb")
     copy("lib/local_model_evaluation/production_pool_fulfillment.rb")
     copy("lib/local_model_evaluation/production_pool_qualification.rb")
+    copy("lib/local_model_evaluation/production_pool_fulfill_options.rb")
     copy("lib/production_burst_budget_contract.rb")
     write_model_config
     fake_rpof
@@ -199,16 +201,16 @@ class ProductionPoolFulfillTest < Minitest::Test
   end
 
   def test_requires_explicit_dry_run_or_paid_authorization
-    _out, err, status = Open3.capture3(
-      { "LME_REPO" => @tmp },
-      RbConfig.ruby,
-      File.join(@tmp, "bin", "lme-production-pool-fulfill"),
-      "output/plan.json",
-      "--pool", "qwen35",
-      "--output", "output/handoff.json"
-    )
-    refute status.success?
-    assert_includes err, "use --dry-run or --yes"
+    error = assert_raises(OptionParser::ParseError) do
+      LocalModelEvaluation::ProductionPoolFulfillOptions.validate!(
+        {
+          pool: "qwen35", output: "output/handoff.json", target_workers: nil,
+          dry_run: false, yes: false
+        },
+        ["output/plan.json"]
+      )
+    end
+    assert_includes error.message, "use --dry-run or --yes"
   end
 
   def test_rejects_stale_or_dequalified_plan_identity_in_process

@@ -10,6 +10,7 @@ ENV["LME_REPO"] = ROOT
 $LOAD_PATH.unshift File.join(ROOT, "lib")
 require "local_model_evaluation/production_backlog_source_preflight"
 require "local_model_evaluation/rpof_client"
+require "local_model_evaluation/rpof_campaign_validation"
 require "production_worker_expansion_controller"
 
 opts = {
@@ -64,29 +65,7 @@ end
 
 begin
   parser.parse!(ARGV)
-  raise OptionParser::InvalidArgument, "unexpected arguments: #{ARGV.join(' ')}" unless ARGV.empty?
-  raise OptionParser::InvalidArgument, "use either --workers or --all, not both" if opts[:workers] && opts[:all]
-  raise OptionParser::InvalidArgument, "use --workers LIST or --all" unless opts[:workers] || opts[:all]
-  %i[context jobs workdir output].each do |key|
-    raise OptionParser::MissingArgument, "--#{key.to_s.tr('_', '-')}" if opts[key].nil?
-  end
-  raise OptionParser::InvalidArgument, "--context must be positive" unless opts[:context].positive?
-  raise OptionParser::MissingArgument, "--model" if opts[:models].empty?
-  raise OptionParser::InvalidArgument, "--terminal-inactivity-minutes must be positive" unless opts[:terminal_inactivity_minutes].positive?
-  raise OptionParser::InvalidArgument, "--shutdown-drain-timeout-minutes must be positive" unless opts[:shutdown_drain_timeout_minutes].positive?
-  unknown_digests = opts[:expected_digests].keys - opts[:models]
-  raise OptionParser::InvalidArgument, "digest supplied for unrequested model(s): #{unknown_digests.join(', ')}" unless unknown_digests.empty?
-  expansion_values = [opts[:expansion_plan], opts[:expansion_pool], opts[:initial_fulfillment_seconds]]
-  if expansion_values.any? && !expansion_values.all?
-    raise OptionParser::InvalidArgument,
-          "--expansion-plan, --expansion-pool, and --initial-fulfillment-seconds must be used together"
-  end
-  if opts[:initial_fulfillment_seconds] && opts[:initial_fulfillment_seconds] <= 0
-    raise OptionParser::InvalidArgument, "--initial-fulfillment-seconds must be positive"
-  end
-  if opts[:expansion_plan] && !opts[:dynamic_worker_admission]
-    raise OptionParser::InvalidArgument, "adaptive expansion requires --dynamic-worker-admission"
-  end
+  LocalModelEvaluation::RpofCampaignValidation.validate_options!(opts, ARGV)
 rescue OptionParser::ParseError => e
   warn "ERROR: #{e.message}"
   warn parser
@@ -118,26 +97,10 @@ end
 
 begin
   jobs_document = JSON.parse(File.read(File.expand_path(opts.fetch(:jobs))))
-  jobs = jobs_document.fetch("jobs")
-  raise ArgumentError, "jobs must be a non-empty array" unless jobs.is_a?(Array) && !jobs.empty?
-  production_manifests = jobs.filter_map do |job|
-    argv = job["argv"]
-    next unless argv.is_a?(Array) && argv.first.to_s == "bin/lme-production-remote-job"
-
-    unless argv.length == 2 && !argv.fetch(1).to_s.empty?
-      raise ArgumentError,
-            "production remote campaign job #{job.fetch('job_id', '?')} must use argv " \
-            "[\"bin/lme-production-remote-job\", MANIFEST]"
-    end
-    argv.fetch(1).to_s
-  end
-  if production_manifests.any? && opts[:source_preflight_queue].to_s.empty?
-    raise ArgumentError, "production remote campaign jobs require --source-preflight-queue QUEUE"
-  end
-  if opts[:source_preflight_queue] && production_manifests.empty?
-    raise ArgumentError,
-          "--source-preflight-queue requires at least one bin/lme-production-remote-job job"
-  end
+  jobs, production_manifests = LocalModelEvaluation::RpofCampaignValidation.validate_jobs!(
+    jobs_document,
+    source_preflight_queue: opts[:source_preflight_queue]
+  )
 
   selector = if opts[:all]
                { "mode" => "all" }

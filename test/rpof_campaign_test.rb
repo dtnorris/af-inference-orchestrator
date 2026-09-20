@@ -6,6 +6,7 @@ require "json"
 require "open3"
 require "rbconfig"
 require "tmpdir"
+require_relative "../lib/local_model_evaluation/rpof_campaign_validation"
 
 class RpofCampaignTest < Minitest::Test
   ROOT = File.expand_path("..", __dir__)
@@ -134,9 +135,7 @@ class RpofCampaignTest < Minitest::Test
   end
 
   def test_production_remote_jobs_require_source_preflight_queue
-    jobs_path = File.join(@tmp, "production-jobs.json")
-    output = File.join(@tmp, "production-evidence")
-    File.write(jobs_path, JSON.dump(
+    jobs_document = {
       "jobs" => [{
         "job_id" => "production-0001",
         "argv" => [
@@ -144,26 +143,15 @@ class RpofCampaignTest < Minitest::Test
           "experiments/production-backlog-031/production-backlog-031-gptoss-ee-adv0783-v1.yml"
         ]
       }]
-    ))
+    }
 
-    stdout, stderr, status = Open3.capture3(
-      {
-        "RPOF_EXECUTABLE" => @fake,
-        "CAPTURE_ROOT" => @tmp
-      },
-      RbConfig.ruby,
-      SCRIPT,
-      "--workers", "1-2",
-      "--fleet", "fixture",
-      "--model", "gpt-oss:20b",
-      "--context", "131072",
-      "--jobs", jobs_path,
-      "--workdir", @tmp,
-      "--output", output
-    )
-
-    refute status.success?, stdout + stderr
-    assert_includes stderr, "production remote campaign jobs require --source-preflight-queue QUEUE"
+    error = assert_raises(ArgumentError) do
+      LocalModelEvaluation::RpofCampaignValidation.validate_jobs!(
+        jobs_document,
+        source_preflight_queue: nil
+      )
+    end
+    assert_includes error.message, "production remote campaign jobs require --source-preflight-queue QUEUE"
     refute File.exist?(File.join(@tmp, "capability-check.json"))
   end
 end
