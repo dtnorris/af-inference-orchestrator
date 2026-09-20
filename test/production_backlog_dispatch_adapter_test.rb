@@ -48,8 +48,8 @@ class ProductionBacklogDispatchAdapterTest < Minitest::Test
       )
 
       assert status.success?, err
-      assert_equal "#{root}\n", File.read(File.join(root, "observed-repo-root"))
-      assert_equal "#{root}\n", File.read(File.join(root, "observed-lme-repo"))
+      assert_equal "#{File.realpath(root)}\n", File.read(File.join(root, "observed-repo-root"))
+      assert_equal "#{File.realpath(root)}\n", File.read(File.join(root, "observed-lme-repo"))
     end
   end
 
