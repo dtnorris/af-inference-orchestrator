@@ -144,6 +144,17 @@ class AdventureIngestTest < Minitest::Test
     end
   end
 
+  def test_deferred_columns_may_be_absent_from_baseline_catalog
+    deferred = AdventureIngest::Batch::DEFERRED_COLUMNS
+    headers = @rows.first
+    keep_indexes = headers.each_index.reject { |index| deferred.include?(headers[index]) }
+    rows = @rows.map do |row|
+      keep_indexes.map { |index| row[index] }
+    end
+
+    assert_equal %w[ADV-0002 ADV-0001], @batch.select_targets(rows).map { |target| target.fetch('id') }
+  end
+
   def test_page_envelope_remains_frozen
     @rows.last[4] = 100
     assert_raises(AdventureIngest::Error) { @batch.select_targets(@rows) }

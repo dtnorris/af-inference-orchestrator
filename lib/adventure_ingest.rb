@@ -382,9 +382,10 @@ module AdventureIngest
       headers = rows.first.map { |v| canonical_header(v) }
       score_columns = dimension_contracts.map { |d| d.fetch('catalog_column') }
       required = ['Adventure ID', 'Adventure Title', 'Source Book', 'Book Publisher',
-                  'Page Count', 'Start Page', 'End Page', 'Level Start', 'Level End', *score_columns, *DEFERRED_COLUMNS]
+                  'Page Count', 'Start Page', 'End Page', 'Level Start', 'Level End', *score_columns]
       abort_with("missing catalog headers: #{(required - headers).join(', ')}") unless (required - headers).empty?
       abort_with('duplicate catalog headers') unless headers.reject(&:empty?).uniq == headers.reject(&:empty?)
+      deferred_columns_present = DEFERRED_COLUMNS.select { |column| headers.include?(column) }
       seen = []
       targets = []
       rows.drop(1).each do |row|
@@ -400,7 +401,7 @@ module AdventureIngest
         abort_with("#{id} missing/invalid page count or outside proven <100 page envelope") unless page_count&.positive? && page_count < 100
         left, right = ['Level Start', 'Level End'].map { |column| blank?(values[column]) }
         abort_with("#{id} has asymmetric Levels state") unless left == right
-        (score_columns + DEFERRED_COLUMNS).each do |column|
+        (score_columns + deferred_columns_present).each do |column|
           abort_with("#{id} #{column} must remain blank") unless blank?(values[column])
         end
         targets << {
