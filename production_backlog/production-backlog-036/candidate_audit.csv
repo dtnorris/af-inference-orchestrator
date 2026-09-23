@@ -1,0 +1,15 @@
+adventure_id,adventure_title,source_book,publisher,page_count,level_start,level_end,levels_action,decision,reason
+ADV-0912,Operation Deadfall,Arcana Unleashed: Deadfall,Wizards of the Coast,86,11,20,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0913,Chapter 3: Operation Deadfall,Arcana Unleashed: Deadfall,Wizards of the Coast,24,11,13,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0914,First Mission,Arcana Unleashed: Deadfall,Wizards of the Coast,8,11,12,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0915,Second Mission,Arcana Unleashed: Deadfall,Wizards of the Coast,8,12,13,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0916,Peril in Pyarados,Arcana Unleashed: Deadfall,Wizards of the Coast,14,13,15,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0917,Pyarados Militia,Arcana Unleashed: Deadfall,Wizards of the Coast,5,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0918,An Ancient Temple,Arcana Unleashed: Deadfall,Wizards of the Coast,7,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0919,Rebel Alliances,Arcana Unleashed: Deadfall,Wizards of the Coast,14,15,17,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0920,Veiled Tower,Arcana Unleashed: Deadfall,Wizards of the Coast,6,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0921,Blackrock Cove,Arcana Unleashed: Deadfall,Wizards of the Coast,6,,,SCORE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0922,Precipice of Oblivion,Arcana Unleashed: Deadfall,Wizards of the Coast,18,17,19,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0923,Fortress of Opposition,Arcana Unleashed: Deadfall,Wizards of the Coast,5,17,18,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0924,Castle Thrul,Arcana Unleashed: Deadfall,Wizards of the Coast,6,18,19,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass
+ADV-0925,Szass Tam Must Die,Arcana Unleashed: Deadfall,Wizards of the Coast,8,19,20,PRESERVE,SELECT,explicit_target_11_scores_blank_source_preflight_pass

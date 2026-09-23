@@ -1,0 +1,11 @@
+---
+llm:
+  provider: ollama
+  model: gpt-oss:20b
+  reasoning_effort: low
+  max_tokens: 4096
+files:
+  catalog: 5e_Adventure_Master_Catalog_7.0.3.xlsx
+source:
+  allow_inward_boundary_clamp_adventure_ids: []
+  inward_boundary_clamp_max_gap_by_adventure: {}
