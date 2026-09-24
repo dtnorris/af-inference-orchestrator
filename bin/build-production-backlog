@@ -1,13 +1,21 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 require_relative '../lib/adventure_ingest'
+require_relative '../lib/boundary_apply_handoff'
 
-options = { ids: [], clamp_ids: [], clamp_gaps: {}, force: false, dry_run: false }
+options = { ids: [], clamp_ids: [], clamp_gaps: {}, force: false, dry_run: false, from_boundary_apply: nil }
 parser = OptionParser.new do |opts|
-  opts.banner = 'Usage: bin/build-production-backlog --batch 020 --catalog CATALOG.xlsx --ids ADV-0465..ADV-0493 [options]'
+  opts.banner = <<~USAGE.chomp
+    Usage:
+      bin/build-production-backlog --batch 020 --catalog CATALOG.xlsx --ids ADV-0465..ADV-0493 [options]
+      bin/build-production-backlog --batch 037 --from-boundary-apply APPLY_REPORT.json [options]
+  USAGE
   opts.on('--batch NUMBER', 'Batch number or production-backlog-NNN') { |v| options[:batch] = v }
   opts.on('--catalog FILE', 'Catalog basename resolved through scorer configuration') { |v| options[:catalog] = v }
   opts.on('--ids IDS', 'Exact comma-separated IDs or inclusive ranges; repeatable') { |v| options[:ids] << v }
+  opts.on('--from-boundary-apply FILE', 'Verified af-data-pipeline boundary-freeze apply report; derives catalog + exact Adventure-ID scope') do |path|
+    options[:from_boundary_apply] = path
+  end
   opts.on('--clamp-policy FILE', 'Explicit YAML source-boundary approvals (no automatic repairs)') do |path|
     data = YAML.safe_load_file(path, aliases: true)
     allowed = %w[allow_inward_boundary_clamp_adventure_ids inward_boundary_clamp_max_gap_by_adventure]
@@ -22,10 +30,32 @@ end
 begin
   parser.parse!
   raise AdventureIngest::Error, 'unexpected arguments' unless ARGV.empty?
-  raise AdventureIngest::Error, '--batch and --catalog are required' unless options[:batch] && options[:catalog]
+  raise AdventureIngest::Error, '--batch is required' unless options[:batch]
+
   force = options.delete(:force)
   dry_run = options.delete(:dry_run)
-  AdventureIngest::Batch.new(root: File.expand_path('..', __dir__), **options).build(force: force, dry_run: dry_run)
+  receipt_path = options.delete(:from_boundary_apply)
+  root = File.expand_path('..', __dir__)
+
+  batch =
+    if receipt_path
+      if options[:catalog] || !options[:ids].empty?
+        raise AdventureIngest::Error, '--from-boundary-apply is mutually exclusive with --catalog/--ids'
+      end
+      handoff = AdventureIngest::BoundaryApplyHandoff.load(receipt_path)
+      AdventureIngest::BoundaryApplyBatch.new(
+        root: root,
+        batch: options.fetch(:batch),
+        handoff: handoff,
+        clamp_ids: options.fetch(:clamp_ids),
+        clamp_gaps: options.fetch(:clamp_gaps)
+      )
+    else
+      raise AdventureIngest::Error, '--catalog and --ids are required without --from-boundary-apply' unless options[:catalog] && !options[:ids].empty?
+      AdventureIngest::Batch.new(root: root, **options)
+    end
+
+  batch.build(force: force, dry_run: dry_run)
 rescue AdventureIngest::Error, OptionParser::ParseError, KeyError, ArgumentError, Psych::Exception, SystemCallError, LoadError => e
   warn "ERROR: #{e.message}"
   exit 1
