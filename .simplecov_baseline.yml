@@ -1,0 +1,283 @@
+# Per-file coverage floors. A file that drops below its floor fails the run,
+# and files with no entry fall through to the global per-file minimum.
+# Regenerate with `simplecov ratchet`. Floors only ever tighten.
+lib/adventure_ingest.rb:
+  lines:
+    percent: 93.54
+    missed: 18
+  branches:
+    percent: 69.82
+    missed: 35
+lib/adventure_ingest_verifier.rb:
+  lines:
+    percent: 90.38
+    missed: 10
+  branches:
+    percent: 68.18
+    missed: 7
+lib/boundary_apply_handoff.rb:
+  lines:
+    percent: 92.85
+    missed: 10
+  branches:
+    percent: 72.72
+    missed: 12
+lib/local_model_evaluation.rb:
+  lines:
+    percent: 100.0
+    missed: 0
+  branches:
+    percent: 100.0
+    missed: 0
+lib/local_model_evaluation/config.rb:
+  lines:
+    percent: 100.0
+    missed: 0
+  branches:
+    percent: 100.0
+    missed: 0
+lib/local_model_evaluation/experiment.rb:
+  lines:
+    percent: 100.0
+    missed: 0
+  branches:
+    percent: 50.0
+    missed: 5
+lib/local_model_evaluation/job.rb:
+  lines:
+    percent: 100.0
+    missed: 0
+  branches:
+    percent: 100.0
+    missed: 0
+lib/local_model_evaluation/production_backlog_source_preflight.rb:
+  lines:
+    percent: 90.58
+    missed: 16
+  branches:
+    percent: 71.05
+    missed: 22
+lib/local_model_evaluation/production_pool_fulfill_options.rb:
+  lines:
+    percent: 73.33
+    missed: 4
+  branches:
+    percent: 41.66
+    missed: 7
+lib/local_model_evaluation/production_pool_fulfillment.rb:
+  lines:
+    percent: 97.82
+    missed: 1
+  branches:
+    percent: 91.66
+    missed: 1
+lib/local_model_evaluation/production_pool_qualification.rb:
+  lines:
+    percent: 86.2
+    missed: 4
+  branches:
+    percent: 64.28
+    missed: 5
+lib/local_model_evaluation/qualification_plan.rb:
+  lines:
+    percent: 100.0
+    missed: 0
+  branches:
+    percent: 61.11
+    missed: 7
+lib/local_model_evaluation/qualification_runner.rb:
+  lines:
+    percent: 89.57
+    missed: 22
+  branches:
+    percent: 50.0
+    missed: 42
+lib/local_model_evaluation/reporter.rb:
+  lines:
+    percent: 97.46
+    missed: 2
+  branches:
+    percent: 68.18
+    missed: 7
+lib/local_model_evaluation/rpof_campaign_validation.rb:
+  lines:
+    percent: 34.88
+    missed: 28
+  branches:
+    percent: 11.76
+    missed: 30
+lib/local_model_evaluation/rpof_client.rb:
+  lines:
+    percent: 0.0
+    missed: 165
+  branches:
+    percent: 0.0
+    missed: 66
+lib/local_model_evaluation/rpof_readiness.rb:
+  lines:
+    percent: 0.0
+    missed: 37
+  branches:
+    percent: 0.0
+    missed: 12
+lib/local_model_evaluation/run_status.rb:
+  lines:
+    percent: 80.55
+    missed: 7
+  branches:
+    percent: 80.0
+    missed: 2
+lib/local_model_evaluation/runner.rb:
+  lines:
+    percent: 82.96
+    missed: 23
+  branches:
+    percent: 58.97
+    missed: 16
+lib/local_model_evaluation/scheduler.rb:
+  lines:
+    percent: 100.0
+    missed: 0
+  branches:
+    percent: 100.0
+    missed: 0
+lib/local_model_evaluation/terra_comparator.rb:
+  lines:
+    percent: 97.46
+    missed: 2
+  branches:
+    percent: 60.0
+    missed: 12
+lib/local_model_evaluation/worker.rb:
+  lines:
+    percent: 100.0
+    missed: 0
+  branches:
+    percent: 100.0
+    missed: 0
+lib/local_model_evaluation/worker_check.rb:
+  lines:
+    percent: 68.08
+    missed: 15
+  branches:
+    percent: 50.0
+    missed: 5
+lib/production_backlog_control.rb:
+  lines:
+    percent: 75.72
+    missed: 59
+  branches:
+    percent: 44.06
+    missed: 66
+lib/production_backlog_dispatch.rb:
+  lines:
+    percent: 87.32
+    missed: 9
+  branches:
+    percent: 68.18
+    missed: 7
+lib/production_backlog_remote_campaign.rb:
+  lines:
+    percent: 93.33
+    missed: 3
+  branches:
+    percent: 55.55
+    missed: 8
+lib/production_backlog_remote_runner.rb:
+  lines:
+    percent: 80.85
+    missed: 18
+  branches:
+    percent: 36.36
+    missed: 21
+lib/production_backlog_runner_policy.rb:
+  lines:
+    percent: 86.84
+    missed: 5
+  branches:
+    percent: 66.66
+    missed: 6
+lib/production_backlog_runtime_contract.rb:
+  lines:
+    percent: 92.85
+    missed: 4
+  branches:
+    percent: 60.0
+    missed: 8
+lib/production_backlog_selector.rb:
+  lines:
+    percent: 95.31
+    missed: 6
+  branches:
+    percent: 66.0
+    missed: 17
+lib/production_budget_heartbeat.rb:
+  lines:
+    percent: 88.09
+    missed: 5
+  branches:
+    percent: 44.44
+    missed: 5
+lib/production_budget_lifecycle.rb:
+  lines:
+    percent: 84.84
+    missed: 5
+  branches:
+    percent: 41.66
+    missed: 7
+lib/production_burst_budget_contract.rb:
+  lines:
+    percent: 96.72
+    missed: 2
+  branches:
+    percent: 62.5
+    missed: 9
+lib/production_burst_runner.rb:
+  lines:
+    percent: 79.08
+    missed: 73
+  branches:
+    percent: 53.27
+    missed: 57
+lib/production_burst_status.rb:
+  lines:
+    percent: 53.84
+    missed: 24
+  branches:
+    percent: 30.0
+    missed: 14
+lib/production_execution_pool_plan.rb:
+  lines:
+    percent: 92.07
+    missed: 13
+  branches:
+    percent: 58.92
+    missed: 23
+lib/production_execution_pool_plan_writer.rb:
+  lines:
+    percent: 80.76
+    missed: 5
+  branches:
+    percent: 50.0
+    missed: 5
+lib/production_failure_classifier.rb:
+  lines:
+    percent: 96.15
+    missed: 3
+  branches:
+    percent: 63.88
+    missed: 13
+lib/production_worker_expansion_controller.rb:
+  lines:
+    percent: 86.54
+    missed: 30
+  branches:
+    percent: 64.36
+    missed: 31
+lib/production_worker_expansion_policy.rb:
+  lines:
+    percent: 95.71
+    missed: 3
+  branches:
+    percent: 88.46
+    missed: 3

@@ -11,4 +11,15 @@ task "test:lint" do
   sh "bundle", "exec", "rubocop", "--config", ".rubocop.yml", "test"
 end
 
+desc "Run tests with line and branch coverage"
+task "test:coverage" do
+  sh({ "COVERAGE" => "1" }, "bundle", "exec", "rake", "test")
+end
+
+desc "Measure current coverage and initialize the committed ratchet baseline"
+task "test:coverage:baseline" do
+  sh({ "COVERAGE" => "1" }, "bundle", "exec", "rake", "test")
+  sh "bundle", "exec", "simplecov", "ratchet", "--init"
+end
+
 task default: :test

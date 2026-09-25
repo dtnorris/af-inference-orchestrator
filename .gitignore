@@ -1,6 +1,7 @@
 # Machine-specific worker configuration
 config/workers.yml
 output/
+coverage/
 
 *.DS_Store
 */**/.DS_Store
