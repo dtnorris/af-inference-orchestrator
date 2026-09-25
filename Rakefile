@@ -4,6 +4,7 @@ require "minitest/test_task"
 
 Minitest::TestTask.create do |t|
   t.test_globs = ["test/**/*_test.rb"]
+  t.test_prelude = %(require "simplecov"; SimpleCov.start) if ENV["COVERAGE"]
 end
 
 desc "Check structural Minitest test quality"

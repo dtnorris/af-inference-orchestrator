@@ -108,18 +108,18 @@ lib/local_model_evaluation/rpof_campaign_validation.rb:
     missed: 30
 lib/local_model_evaluation/rpof_client.rb:
   lines:
-    percent: 0.0
-    missed: 165
+    percent: 57.57
+    missed: 70
   branches:
-    percent: 0.0
-    missed: 66
+    percent: 33.33
+    missed: 44
 lib/local_model_evaluation/rpof_readiness.rb:
   lines:
-    percent: 0.0
-    missed: 37
+    percent: 59.45
+    missed: 15
   branches:
-    percent: 0.0
-    missed: 12
+    percent: 16.66
+    missed: 10
 lib/local_model_evaluation/run_status.rb:
   lines:
     percent: 80.55
