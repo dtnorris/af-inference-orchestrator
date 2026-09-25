@@ -1,0 +1,115 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require_relative "../lib/production_backlog_control"
+
+ROOT = File.expand_path("..", __dir__)
+USAGE = <<~TEXT
+  Usage:
+    bin/production-backlog start  production_backlog/production-backlog-NNN
+    bin/production-backlog status production_backlog/production-backlog-NNN
+    bin/production-backlog pause  production_backlog/production-backlog-NNN
+    bin/production-backlog resume production_backlog/production-backlog-NNN
+TEXT
+
+def cmd(action, queue) = "bin/production-backlog #{action} #{queue}"
+
+def print_status(data)
+  counts = data.fetch("counts")
+  puts "STATE: #{data.fetch('state')}"
+  puts "Queue: #{data.fetch('queue')}"
+  puts "Production root: #{data.fetch('production_root')}#{data.fetch('production_root_matches') ? '' : ' (WRONG ROOT)'}"
+  puts "HEAD: #{data.fetch('head')}"
+  puts "Queue prepared from: #{data.fetch('queue_commit')}"
+  working_tree = data.fetch("working_tree_status")
+  puts "Working tree: #{working_tree.empty? ? 'clean' : 'DIRTY'}"
+  puts working_tree unless working_tree.empty?
+  puts format(
+    "Progress: %d/%d terminal | complete %d | failed %d sticky | running %d | pending %d | unknown %d",
+    data.fetch("terminal"), data.fetch("expected_calls"), counts["complete"], counts["failed"],
+    counts["running"], counts["pending"], counts["unknown"]
+  )
+  if (manager = data["manager"])
+    puts "Runner: #{data.fetch('manager_running') ? 'running' : 'stopped'} pid=#{manager['pid']}"
+    puts "Log: #{manager['log_path']}" if manager["log_path"]
+  else
+    puts "Runner: no managed launch recorded for this queue"
+  end
+  puts "Pause: #{data.fetch('pause_requested') ? 'REQUESTED' : 'not requested'}"
+  if (current = data["current"])
+    puts "Current: [#{current['index']}/#{current['total']}] #{current['manifest']}"
+    puts "Current started: #{current['started_at']}" if current["started_at"]
+  end
+
+  if (eta = data["eta"])
+    if eta.fetch("targets").zero?
+      puts "Measured ETA: complete"
+    else
+      finish = Time.now + eta.fetch("seconds")
+      tiers = eta.fetch("tiers").sort.map { |tier, count| "#{count} #{tier}" }.join(", ")
+      puts "Measured ETA: ~#{ProductionBacklogControl.format_duration(eta.fetch('seconds'))} (about #{finish.strftime('%-I:%M %p %Z')})"
+      puts "ETA evidence: #{eta.fetch('samples')} completed timings; #{eta.fetch('targets')} nonterminal calls; #{tiers}"
+      puts "ETA note: nearest measured calls by page count are used; a running call is conservatively counted at its full comparable duration."
+    end
+  elsif data.fetch("terminal") < data.fetch("expected_calls")
+    puts "Measured ETA: insufficient evidence (need #{ProductionBacklogControl::MIN_ETA_SAMPLES} completed timings)"
+  end
+
+  puts
+  case data.fetch("state")
+  when "RUNNING"
+    puts "Next: #{cmd('status', data.fetch('queue'))}"
+    puts "Pause safely: #{cmd('pause', data.fetch('queue'))}"
+  when "PAUSE_REQUESTED"
+    puts "Next: current inference is allowed to persist; rerun #{cmd('status', data.fetch('queue'))}"
+  when "PAUSED"
+    puts "Next: #{cmd('resume', data.fetch('queue'))}"
+  when "READY"
+    puts "Next: #{cmd('start', data.fetch('queue'))}"
+  when "STOPPED", "ATTENTION"
+    puts "Next: inspect the retained log/status before resuming. Sticky failures must not be rerun for a more favorable sample."
+  else
+    puts "Next: queue is terminal; inspect retained results/QC rather than rerunning sticky calls."
+  end
+end
+
+begin
+  action = ARGV.shift
+  queue = ARGV.shift
+  abort USAGE unless action && queue && ARGV.empty?
+  controller = ProductionBacklogControl::Controller.new(root: ROOT)
+
+  case action
+  when "start", "resume"
+    result = controller.start(queue, resume: action == "resume")
+    verb = action == "resume" ? "RESUMED" : "STARTED"
+    calls = ProductionBacklogControl::Queue.new(root: ROOT, queue: queue).expected_calls
+    puts "#{verb}: #{result.fetch('queue')}"
+    puts "Production root: #{result.fetch('production_root')}"
+    puts "HEAD: #{result.fetch('repo_head')}"
+    puts "Frozen calls: #{calls}"
+    puts "Runner pid: #{result.fetch('pid')}"
+    puts "Log: #{result.fetch('log_path')}"
+    puts "The existing verifier/source/model checks run before inference; complete/failed calls stay sticky; existing circuit breakers remain authoritative."
+    puts
+    puts "Next: #{cmd('status', result.fetch('queue'))}"
+    puts "Pause safely: #{cmd('pause', result.fetch('queue'))}"
+  when "pause"
+    result = controller.pause(queue)
+    puts "PAUSE REQUESTED: #{result.fetch('queue')}"
+    if (current = result["current"])
+      puts "Current inference will not be killed: [#{current['index']}/#{current['total']}] #{current['manifest']}"
+      puts "Production will stop after that call persists."
+    else
+      puts "No active call is recorded; the next launch remains paused until resume."
+    end
+    puts "Next: #{cmd('status', result.fetch('queue'))}"
+  when "status"
+    print_status(controller.status(queue))
+  else
+    abort USAGE
+  end
+rescue ProductionBacklogControl::Error, KeyError, ArgumentError, SystemCallError => e
+  warn "ERROR: #{e.message}"
+  exit 1
+end
