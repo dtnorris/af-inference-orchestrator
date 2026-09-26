@@ -26,6 +26,43 @@ module AdventureIngest
       end
     end
 
+    def after_run(root:, queue:, contract_type:, data_pipeline_root: nil)
+      return nil unless contract_type.to_s == "adventure_ingest_v1"
+
+      queue_name = File.basename(queue.to_s)
+      match = /\Aproduction-backlog-(\d+)\z/.match(queue_name)
+      raise ArgumentError, "cannot derive production batch number from #{queue.inspect}" unless match
+
+      batch = Integer(match[1], 10)
+      raise ArgumentError, "production batch number must be positive" unless batch.positive?
+
+      inference_root = File.expand_path(root)
+      pipeline_root = File.expand_path(
+        data_pipeline_root || File.join(File.dirname(inference_root), "af-data-pipeline")
+      )
+
+      {
+        cwd: pipeline_root,
+        argv: [
+          File.join(pipeline_root, "bin", "af-data"),
+          "production-ingest-prepare",
+          "--batch", batch.to_s,
+          "--inference-root", inference_root
+        ]
+      }
+    end
+
+    def render_after_run(root:, queue:, contract_type:, data_pipeline_root: nil, io: $stdout)
+      step = after_run(
+        root:,
+        queue:,
+        contract_type:,
+        data_pipeline_root:
+      )
+      render(step, io:) if step
+      step
+    end
+
     def render(step, io: $stdout)
       io.puts
       io.puts "Next command:"

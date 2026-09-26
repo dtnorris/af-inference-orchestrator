@@ -249,3 +249,10 @@ echo "================================================================"
 echo "Queue: $QUEUE_ARG"
 echo "New failures this invocation: $batch_total_new_failures"
 echo "Failure budget checkpoints this invocation: $batch_failure_budget_checkpoints"
+
+if ! ruby --disable-gems -I"$REPO/lib" -rproduction_backlog_cli_guidance -e \
+  'AdventureIngest::ProductionBacklogCliGuidance.render_after_run(root: ARGV.fetch(0), queue: ARGV.fetch(1), contract_type: ARGV.fetch(2), data_pipeline_root: ENV["AF_DATA_PIPELINE_ROOT"])' \
+  "$REPO" "$QUEUE_ARG" "$CONTRACT_TYPE"
+then
+  echo "WARNING: production queue finished, but next-step guidance could not be rendered." >&2
+fi
