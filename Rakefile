@@ -5,6 +5,11 @@ require "open3"
 
 TEST_RUNTIME_WARNING_SECONDS = 6.0
 TEST_RUNTIME_CEILING_SECONDS = 6.5
+TEST_RUNTIME_CONTENTION_MULTIPLIER = 1.25
+TEST_RUNTIME_ACTIVE_MULTIPLIER =
+  ENV["AF_TEST_CONTENDED"] == "1" ? TEST_RUNTIME_CONTENTION_MULTIPLIER : 1.0
+TEST_RUNTIME_ACTIVE_WARNING_SECONDS = TEST_RUNTIME_WARNING_SECONDS * TEST_RUNTIME_ACTIVE_MULTIPLIER
+TEST_RUNTIME_ACTIVE_CEILING_SECONDS = TEST_RUNTIME_CEILING_SECONDS * TEST_RUNTIME_ACTIVE_MULTIPLIER
 TEST_HEALTH_RESULTS = {}
 TEST_HEALTH_ERRORS = {}
 TEST_HEALTH_MUTEX = Mutex.new
@@ -66,11 +71,11 @@ task "test:coverage" do
 
   abort "Coverage test suite failed before runtime could be accepted" unless status.success?
 
-  if elapsed >= TEST_RUNTIME_CEILING_SECONDS
+  if elapsed >= TEST_RUNTIME_ACTIVE_CEILING_SECONDS
     failure = format(
-      "FAILURE: coverage test suite runtime %.3fs reached hard ceiling %.1fs",
+      "FAILURE: coverage test suite runtime %.3fs reached hard ceiling %ss",
       elapsed,
-      TEST_RUNTIME_CEILING_SECONDS
+      TEST_RUNTIME_ACTIVE_CEILING_SECONDS
     )
 
     if (Rake.application.top_level_tasks & %w[default test:contract]).empty?
@@ -78,11 +83,11 @@ task "test:coverage" do
     else
       TEST_HEALTH_RESULTS[:runtime_failure] = failure
     end
-  elsif elapsed >= TEST_RUNTIME_WARNING_SECONDS
+  elsif elapsed >= TEST_RUNTIME_ACTIVE_WARNING_SECONDS
     warning = format(
-      "WARNING: coverage test suite runtime %.3fs reached warning threshold %.1fs",
+      "WARNING: coverage test suite runtime %.3fs reached warning threshold %ss",
       elapsed,
-      TEST_RUNTIME_WARNING_SECONDS
+      TEST_RUNTIME_ACTIVE_WARNING_SECONDS
     )
 
     if (Rake.application.top_level_tasks & %w[default test:contract]).empty?
@@ -92,10 +97,10 @@ task "test:coverage" do
     end
   else
     puts format(
-      "Coverage test suite runtime %.3fs (warn %.1fs, fail %.1fs)",
+      "Coverage test suite runtime %.3fs (warn %ss, fail %ss)",
       elapsed,
-      TEST_RUNTIME_WARNING_SECONDS,
-      TEST_RUNTIME_CEILING_SECONDS
+      TEST_RUNTIME_ACTIVE_WARNING_SECONDS,
+      TEST_RUNTIME_ACTIVE_CEILING_SECONDS
     )
   end
 end

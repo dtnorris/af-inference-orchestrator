@@ -35,6 +35,13 @@ median. The hard ceiling is about 20% above that median. Because the default
 safety sweep now measures the coverage-instrumented run, validate these existing
 thresholds on the same local hardware after applying this change.
 
+When a parallel AdventureFinder workspace test marks the process with
+`AF_TEST_CONTENDED=1`, the runtime guard automatically applies the fixed
+`TEST_RUNTIME_CONTENTION_MULTIPLIER` of 1.25. That makes the contended thresholds
+7.5 s warning / 8.125 s hard failure. Direct `rake` and serial workspace runs
+retain the calibrated 6.0 s / 6.5 s limits. The multiplier accounts for deliberate
+cross-repository resource contention; it does not redefine the isolated baseline.
+
 `bundle exec rake test:coverage` runs the full functional suite once with
 SimpleCov enabled. That single run simultaneously enforces functional
 correctness, the line/branch coverage ratchet, and the runtime ceiling.
