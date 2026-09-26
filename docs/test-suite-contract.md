@@ -20,3 +20,19 @@ Runtime:
 - mean: 5.437 s
 - max: 5.661 s
 - stddev: 0.109 s
+
+## Whole-suite runtime guard
+
+`bundle exec rake test:runtime` measures the wall-clock duration of a fresh
+`bundle exec rake test` subprocess using a monotonic clock.
+
+Thresholds:
+- warning: 6.0 s
+- hard ceiling: 6.5 s
+
+The warning threshold is about 11% above the measured 5.400 s median. The hard
+ceiling is about 20% above the median and fails the runtime guard when reached.
+
+`bundle exec rake test:contract` uses `test:runtime` as its ordinary-suite gate,
+so the runtime ceiling is enforced whenever the complete test-suite contract is
+run.
