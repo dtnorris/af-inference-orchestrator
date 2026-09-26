@@ -2,7 +2,10 @@
 # frozen_string_literal: true
 require_relative '../lib/adventure_ingest'
 require_relative '../lib/boundary_apply_handoff'
+require_relative '../lib/production_backlog_cli_guidance'
 
+original_argv = ARGV.dup
+invocation_cwd = Dir.pwd
 options = { ids: [], clamp_ids: [], clamp_gaps: {}, force: false, dry_run: false, from_boundary_apply: nil }
 parser = OptionParser.new do |opts|
   opts.banner = <<~USAGE.chomp
@@ -56,6 +59,14 @@ begin
     end
 
   batch.build(force: force, dry_run: dry_run)
+  next_step = AdventureIngest::ProductionBacklogCliGuidance.after_build(
+    root: root,
+    invocation_cwd: invocation_cwd,
+    original_argv: original_argv,
+    dry_run: dry_run,
+    queue: batch.queue
+  )
+  AdventureIngest::ProductionBacklogCliGuidance.render(next_step)
 rescue AdventureIngest::Error, OptionParser::ParseError, KeyError, ArgumentError, Psych::Exception, SystemCallError, LoadError => e
   warn "ERROR: #{e.message}"
   exit 1
