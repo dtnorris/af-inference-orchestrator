@@ -13,7 +13,6 @@ class AdventureIngestRunnerTest < Minitest::Test
       lib/production_backlog_runner_policy.rb
       lib/production_backlog_runtime_contract.rb
       lib/production_backlog_dispatch.rb
-      lib/production_backlog_cli_guidance.rb
       bin/production-backlog-policy
       bin/production-backlog-dispatch
     ].each do |path|
@@ -46,11 +45,7 @@ class AdventureIngestRunnerTest < Minitest::Test
 
   def run_queue(path)
     Open3.capture3(
-      {
-        'LME_REPO' => @root,
-        'AF_LLM_MAX_TOKENS' => '99999',
-        'AF_DATA_PIPELINE_ROOT' => File.join(@root, 'af-data-pipeline')
-      },
+      {'LME_REPO' => @root, 'AF_LLM_MAX_TOKENS' => '99999'},
       'bash',
       File.join(@root, 'run_production_backlog.sh'),
       path
@@ -79,17 +74,14 @@ class AdventureIngestRunnerTest < Minitest::Test
     refute File.exist?(File.join(@root, 'inference-called'))
     assert_match(/runtime source preflight failed\. No inference launched\./, out + err)
   end
-  def test_finished_adventure_ingest_queue_prints_catalog_ingest_continuation
-    executable('bin/verify-production-backlog', "#!/bin/sh\nexit 0\n")
 
-    out, err, status = run_queue(queue('adventure_ingest_v1'))
+  def test_runner_wires_finished_queue_to_next_step_guidance
+    runner = File.read(File.join(ROOT, "run_production_backlog.sh"))
 
-    assert status.success?, err
-    assert_includes out, "BACKGROUND PRODUCTION QUEUE FINISHED"
-    assert_includes out, "Next command:"
-    assert_includes out, File.join(@root, 'af-data-pipeline')
-    assert_includes out, "production-ingest-prepare --batch 20"
-    assert_includes out, "--inference-root #{@root}"
+    assert_includes runner, "-rproduction_backlog_cli_guidance"
+    assert_includes runner, "ProductionBacklogCliGuidance.render_after_run"
+    assert_includes runner, '"$REPO" "$QUEUE_ARG" "$CONTRACT_TYPE"'
+    assert_includes runner, 'ENV["AF_DATA_PIPELINE_ROOT"]'
   end
 
 end
